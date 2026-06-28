@@ -69,6 +69,34 @@ PortTressler
 Baijini</textarea>
     </div>
   </div>
+  <details style="background:#fbfbf9;border:1px dashed var(--line);border-radius:8px;padding:8px 12px;margin:12px 0">
+    <summary>Have screenshots? Let an AI read them</summary>
+    <p style="font-size:13px;color:var(--muted);margin:8px 0">Open one of these, upload your contract screenshots together with the prompt below, then paste the AI's reply into the Missions box.</p>
+    <div>
+      <button onclick="openAI('https://chatgpt.com')">ChatGPT ↗</button>
+      <button onclick="openAI('https://claude.ai')">Claude ↗</button>
+      <button onclick="openAI('https://gemini.google.com')">Gemini ↗</button>
+      <button onclick="openAI('https://grok.com')">Grok ↗</button>
+      <button onclick="openAI('https://copilot.microsoft.com')">Copilot ↗</button>
+    </div>
+    <button id="copybtn" onclick="copyPrompt()" style="margin-top:8px">Copy transcription prompt</button>
+    <textarea id="aiprompt" rows="7" readonly style="margin-top:6px"></textarea>
+  </details>
+
+  <details style="background:#fbfbf9;border:1px dashed var(--line);border-radius:8px;padding:8px 12px;margin:12px 0">
+    <summary>Add a mission by hand (pick or type stations)</summary>
+    <div class="row" style="margin-top:8px">
+      <div><label>Mission label (optional)</label><input type="text" id="b-label" placeholder="e.g. L2 medium haul"></div>
+      <div><label>Pickup station</label><input type="text" id="b-pickup" list="stations" placeholder="pick or type"></div>
+    </div>
+    <label style="margin-top:8px">Deliveries</label>
+    <div id="b-deliveries"></div>
+    <div style="margin-top:6px">
+      <button onclick="addDeliveryRow()">+ delivery</button>
+      <button class="primary" onclick="addMissionFromBuilder()">Add this mission to the list ↓</button>
+    </div>
+  </details>
+
   <label style="margin-top:10px">Missions — one block per mission. <code>Pickup: LOC</code> then <code>Deliver SCU COMMODITY to DEST</code>. For multi-pickup boxes add <code>from LOC</code> on the deliver line.</label>
   <textarea id="missions" rows="14"># BP Ice and Food
 Pickup: Baijini
@@ -367,7 +395,82 @@ function merge(arr){
   return Object.values(map);
 }
 
-window.addEventListener("DOMContentLoaded",run);
+// ---- Station / commodity lists for the builder dropdowns ----
+const STATIONS=["Baijini Point","ARC-L1 Wide Forest","ARC-L2 Lively Pathway","ARC-L3 Modern Express",
+  "ARC-L4 Faint Glen","ARC-L5 Yellow Core","Everus Harbor","Seraphim Station","CRU-L1 Ambitious Dream",
+  "Port Tressler","MIC-L1 Shallow Frontier","MIC-L2 Long Forest","Area 18","Lorville","New Babbage","Orison"];
+const COMMODITIES=["Aluminum","Tungsten","Titanium","Corundum","Quartz","Iron","Gold","Copper",
+  "Processed Food","Pressurized Ice","Stims","Waste","Scrap","Medical Supplies","Agricultural Supplies",
+  "Hydrogen","Chlorine","Quantanium","Laranite","Beryl","Diamond","Steel"];
+
+const AI_PROMPT=`Transcribe these Star Citizen cargo hauling contract screenshots into this exact format. Output ONLY the mission blocks, no commentary:
+
+Mission - <short label>
+Pickup: <pickup station>
+Deliver <SCU> <commodity> to <destination station>
+(one Deliver line per delivery objective)
+
+Rules:
+- One Deliver line per delivery (its SCU number, the commodity, and the destination station).
+- If a mission collects one commodity from several stations, write a separate Deliver line for each source and add " from <station>" at the end of that line.
+- Keep station names as shown in the screenshots.`;
+
+function openAI(url){ window.open(url,"_blank","noopener"); }
+function copyPrompt(){
+  const ta=document.getElementById("aiprompt");
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    const b=document.getElementById("copybtn"); const t=b.textContent; b.textContent="Copied ✓";
+    setTimeout(()=>b.textContent=t,1500);
+  }).catch(()=>{ ta.select(); document.execCommand("copy"); });
+}
+function addDeliveryRow(scu,commodity,dest){
+  const wrap=document.getElementById("b-deliveries");
+  const row=document.createElement("div");
+  row.className="brow";
+  row.style.cssText="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px";
+  row.innerHTML=
+    `<input type="number" min="1" placeholder="SCU" value="${scu||''}" style="width:70px" class="b-scu">`+
+    `<input type="text" list="commodities" placeholder="commodity" value="${commodity||''}" style="flex:1;min-width:120px" class="b-comm">`+
+    `<span style="color:var(--muted);font-size:13px">to</span>`+
+    `<input type="text" list="stations" placeholder="destination" value="${dest||''}" style="flex:1;min-width:120px" class="b-dest">`+
+    `<input type="text" list="stations" placeholder="from (optional)" style="flex:1;min-width:120px" class="b-from">`+
+    `<button onclick="this.parentNode.remove()" title="remove">✕</button>`;
+  wrap.appendChild(row);
+}
+function addMissionFromBuilder(){
+  const label=document.getElementById("b-label").value.trim()||"Mission";
+  const pickup=document.getElementById("b-pickup").value.trim();
+  const rows=[...document.querySelectorAll("#b-deliveries .brow")];
+  const lines=[];
+  rows.forEach(r=>{
+    const scu=r.querySelector(".b-scu").value.trim();
+    const comm=r.querySelector(".b-comm").value.trim();
+    const dest=r.querySelector(".b-dest").value.trim();
+    const from=r.querySelector(".b-from").value.trim();
+    if(scu&&comm&&dest) lines.push(`Deliver ${scu} ${comm} to ${dest}`+(from?` from ${from}`:""));
+  });
+  if(!lines.length){ alert("Add at least one complete delivery (SCU, commodity, destination)."); return; }
+  let block=`# ${label}\n`;
+  if(pickup) block+=`Pickup: ${pickup}\n`;
+  block+=lines.join("\n");
+  const ta=document.getElementById("missions");
+  ta.value=(ta.value.trim()?ta.value.trimEnd()+"\n\n":"")+block;
+  // reset builder
+  document.getElementById("b-label").value="";
+  document.getElementById("b-pickup").value="";
+  document.getElementById("b-deliveries").innerHTML="";
+  addDeliveryRow();
+  ta.scrollTop=ta.scrollHeight;
+}
+function initBuilder(){
+  // datalists
+  const mk=(id,arr)=>{ let dl=document.getElementById(id); if(!dl){dl=document.createElement("datalist");dl.id=id;document.body.appendChild(dl);} dl.innerHTML=arr.map(v=>`<option value="${v}">`).join(""); };
+  mk("stations",STATIONS); mk("commodities",COMMODITIES);
+  document.getElementById("aiprompt").value=AI_PROMPT;
+  addDeliveryRow();
+}
+
+window.addEventListener("DOMContentLoaded",()=>{ initBuilder(); run(); });
 </script>
 </body>
 </html>
