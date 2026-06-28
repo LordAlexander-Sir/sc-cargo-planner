@@ -52,21 +52,13 @@ G6 = 128</textarea>
     </div>
     <div>
       <label>Current location (route starts here)</label>
-      <input type="text" id="start" value="Baijini">
-      <label style="margin-top:10px">Route order (one stop per line, in visit order). A location may repeat (e.g. Baijini at start &amp; end).</label>
-      <textarea id="route" rows="4">Baijini
+      <input type="text" id="start" placeholder="e.g. Baijini Point">
+      <label style="margin-top:10px">Route order (one stop per line, in visit order). A location may repeat (e.g. Baijini at start &amp; end). Leave blank and use Suggest below, or fill in yourself.</label>
+      <textarea id="route" rows="4" placeholder="Baijini
 L1
 L2
-L3
-L4
-L5
-Baijini
-CRUL1
-Seraphim
-Everus
-MICL2
-PortTressler
-Baijini</textarea>
+...
+Baijini"></textarea>
       <button onclick="suggestRoute()" style="margin-top:6px">Suggest best route (uses real distances) ⟲</button>
     </div>
   </div>
@@ -99,58 +91,15 @@ Baijini</textarea>
   </details>
 
   <label style="margin-top:10px">Missions — one block per mission. <code>Pickup: LOC</code> then <code>Deliver SCU COMMODITY to DEST</code>. For multi-pickup boxes add <code>from LOC</code> on the deliver line.</label>
-  <textarea id="missions" rows="14"># BP Ice and Food
-Pickup: Baijini
-Deliver 7 Pressurized Ice to L3
-Deliver 5 Processed Food to L1
-Deliver 4 Pressurized Ice to L4
-Deliver 4 Processed Food to L3
-# BP Stims
-Pickup: Baijini
-Deliver 2 Stims to L5
-Deliver 2 Stims to L3
-Deliver 3 Stims to L2
-Deliver 3 Stims to L4
-# Waste and Scrap
-Deliver 1 Waste to Baijini from L5
-Deliver 2 Waste to Baijini from L1
-Deliver 1 Scrap to Baijini from L2
-Deliver 1 Scrap to Baijini from L4
-# L2 medium A
-Pickup: L2
-Deliver 17 Aluminum to Everus
-Deliver 19 Aluminum to Seraphim
-Deliver 34 Tungsten to Everus
-Deliver 26 Corundum to Seraphim
-# L2 medium B
-Pickup: L2
-Deliver 27 Aluminum to Seraphim
-Deliver 21 Aluminum to Everus
-Deliver 25 Tungsten to Seraphim
-Deliver 20 Tungsten to Everus
-# L1 medium
-Pickup: L1
-Deliver 27 Aluminum to Everus
-Deliver 22 Aluminum to Baijini
-Deliver 26 Tungsten to Everus
-Deliver 23 Tungsten to Baijini
-# MIC L2
-Pickup: MICL2
-Deliver 37 Quartz to PortTressler
-Deliver 35 Quartz to Baijini
-Deliver 13 Corundum to PortTressler
-Deliver 8 Corundum to Baijini
-# CRU L1
-Pickup: CRUL1
-Deliver 24 Aluminum to Baijini
-Deliver 20 Aluminum to Everus
-Deliver 26 Titanium to Baijini
-Deliver 27 Titanium to Everus
-# L2 corundum
-Pickup: L2
-Deliver 6 Corundum to Seraphim
-Deliver 5 Corundum to Everus
-Deliver 8 Corundum to Baijini</textarea>
+  <textarea id="missions" rows="14" placeholder="# Mission label
+Pickup: Baijini Point
+Deliver 7 Pressurized Ice to Modern Express Station (ARC-L3)
+Deliver 5 Processed Food to Wide Forest Station (ARC-L1)
+
+# Next mission
+Pickup: ARC-L2 Lively Pathway Station
+Deliver 17 Aluminum to Everus Harbor
+Deliver 19 Aluminum to Seraphim Station"></textarea>
   <div style="margin-top:10px">
     <button class="primary" onclick="run()">Build plan</button>
     <button onclick="window.print()">Print</button>
@@ -561,7 +510,11 @@ function initBuilder(){
   addDeliveryRow();
 }
 
-window.addEventListener("DOMContentLoaded",()=>{ initBuilder(); run(); });
+window.addEventListener("DOMContentLoaded",()=>{
+  initBuilder();
+  if(document.getElementById("missions").value.trim()) run();
+  else document.getElementById("out").innerHTML='<div class="panel" style="color:var(--muted)">Add your missions above (paste, build by hand, or have an AI transcribe screenshots), then press <b>Build plan</b>.</div>';
+});
 </script>
 </body>
 </html>
