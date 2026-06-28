@@ -140,63 +140,106 @@ function parseGrids(t){
   return g;
 }
 
+// Map any verbose station string to a canonical short key.
+// Named stations win first (most reliable); prefixed Lagrange points next; then a cleaned token.
+function normalizeLoc(s){
+  const x=" "+s.toLowerCase().replace(/[^a-z0-9]+/g," ")+" ";
+  // microTech / Crusader Lagrange (must beat the bare L# rule below)
+  if(/\bmic\b.*\bl ?2\b|long forest/.test(x)) return "MICL2";
+  if(/\bcru\b.*\bl ?1\b|ambitious dream/.test(x)) return "CRUL1";
+  // named ArcCorp Lagrange stations
+  if(/modern express/.test(x)) return "L3";
+  if(/wide forest/.test(x)) return "L1";
+  if(/faint glen/.test(x)) return "L4";
+  if(/yellow core/.test(x)) return "L5";
+  if(/lively pathway/.test(x)) return "L2";
+  // named hubs
+  if(/baijini/.test(x)) return "Baijini";
+  if(/everus/.test(x)) return "Everus";
+  if(/seraphim/.test(x)) return "Seraphim";
+  if(/tressler/.test(x)) return "PortTressler";
+  // ArcCorp Lagrange by code (arc-l3, l3, etc.)
+  let m=x.match(/\barc ?l ?([1-5])\b/) || x.match(/\bl ?([1-5])\b/);
+  if(m) return "L"+m[1];
+  // fallback: cleaned token
+  return s.trim().replace(/\s+/g," ");
+}
+function shortCode(loc){
+  const n=normalizeLoc(loc);
+  if(/^L[1-5]$/.test(n)) return n;
+  if(n==="Baijini") return "BP";
+  if(n==="MICL2") return "ML2";
+  if(n==="CRUL1") return "CL1";
+  if(n==="Everus") return "EV";
+  if(n==="Seraphim") return "SER";
+  if(n==="PortTressler") return "PT";
+  return n.replace(/[^A-Za-z0-9]/g,"").slice(0,3).toUpperCase();
+}
+
 function parseMissions(t){
-  // returns {items:[{mission,commodity,scu,pickup,dest}], missions:[{label,pickup,total}]}
   const lines=t.split(/\n/);
-  let cur=null, pickup=null, missions=[], raw=[];
-  function flush(){ if(cur){ missions.push(cur); } }
+  let cur=null, missions=[];
+  const flush=()=>{ if(cur && cur.items.length) missions.push(cur); };
   lines.forEach(line=>{
     const l=line.trim();
     if(!l) return;
-    if(l.startsWith("#")){ flush(); cur={label:l.replace(/^#\s*/,""), items:[]}; pickup=null; return; }
+    // a Pickup line: capture default pickup + any "(Commodity, N SCU total)" multi-source hint
     let m=l.match(/^Pickup:\s*(.+)$/i);
-    if(m){ pickup=m[1].trim(); if(cur) cur.pickup=pickup; return; }
-    m=l.match(/^Deliver\s+(\d+)\s*(?:SCU\s+)?(.+?)\s+to\s+(.+?)(?:\s+from\s+(.+))?$/i);
     if(m){
-      if(!cur){ cur={label:"Mission", items:[]}; missions.push(cur); }
-      const it={commodity:m[2].trim(), scu:+m[1], dest:m[3].trim(), pickup:(m[4]?m[4].trim():pickup)};
-      cur.items.push(it);
+      if(!cur) cur={label:"Mission", items:[], pickups:[]};
+      const body=m[1];
+      const commodityHint=(body.match(/\(([^,)]+),/)||[])[1];
+      const firstStation=body.split(/\s+and\s+|,|\(/i)[0].trim();
+      cur.pickups.push({station:normalizeLoc(firstStation), commodity:commodityHint?commodityHint.trim().toLowerCase():null});
+      if(!commodityHint) cur.defaultPickup=normalizeLoc(firstStation);
       return;
     }
-    throw new Error("Could not parse line: "+l);
+    // a Deliver line
+    m=l.match(/^Deliver\s+(\d+)\s*(?:SCU\s+)?(.+?)\s+to\s+(.+?)(?:\s+from\s+(.+))?$/i);
+    if(m){
+      if(!cur) cur={label:"Mission", items:[], pickups:[]};
+      cur.items.push({commodity:m[2].trim(), scu:+m[1], dest:normalizeLoc(m[3]),
+                      fromRaw:(m[4]?normalizeLoc(m[4]):null)});
+      return;
+    }
+    // anything else starts a new mission, using the line as its label (handles "Mission 1 - ...")
+    flush();
+    cur={label:l.replace(/^#\s*/,""), items:[], pickups:[]};
   });
   flush();
-  // assign mission codes ORIGIN-TOTAL with letter suffix for collisions
-  const items=[];
+  if(!missions.length) throw new Error("No missions found. Each mission needs a header line, a Pickup line, and Deliver lines.");
+
+  // resolve each item's pickup location
+  missions.forEach(ms=>{
+    ms.items.forEach(it=>{
+      if(it.fromRaw){ it.pickup=it.fromRaw; return; }
+      if(ms.defaultPickup && ms.pickups.length===1){ it.pickup=ms.defaultPickup; return; }
+      // match a pickup source by commodity
+      const byComm=ms.pickups.find(p=>p.commodity && it.commodity.toLowerCase().includes(p.commodity.split(" ")[0]));
+      if(byComm){ it.pickup=byComm.station; return; }
+      if(ms.defaultPickup){ it.pickup=ms.defaultPickup; return; }
+      if(ms.pickups[0]){ it.pickup=ms.pickups[0].station; return; }
+      throw new Error(`Mission "${ms.label}": couldn't determine a pickup location for ${it.scu} ${it.commodity} → ${it.dest}`);
+    });
+  });
+
+  // mission codes ORIGIN-TOTAL with letter suffix on collision
   const codeCount={};
   missions.forEach(ms=>{
     const total=ms.items.reduce((a,b)=>a+b.scu,0);
-    // origin token = the (first) pickup short
-    const origins=[...new Set(ms.items.map(i=>i.pickup))];
-    let origin = ms.pickup || origins[0] || "X";
-    const base = shortCode(origin)+"-"+total;
-    ms.code = base;
-    codeCount[base]=(codeCount[base]||0)+1;
+    ms.total=total;
+    const origin=ms.defaultPickup || (ms.items[0]&&ms.items[0].pickup) || "X";
+    ms.code=shortCode(origin)+"-"+total;
+    codeCount[ms.code]=(codeCount[ms.code]||0)+1;
   });
-  // resolve collisions
   const seen={};
-  missions.forEach(ms=>{
-    if(codeCount[ms.code]>1){
-      seen[ms.code]=(seen[ms.code]||0);
-      ms.code = ms.code + String.fromCharCode(65+seen[ms.code]);
-      seen[ms.code.slice(0,-1)]++;
-    }
-  });
-  missions.forEach(ms=>{
-    ms.items.forEach(it=>{
-      items.push({mission:ms.code, commodity:it.commodity, scu:it.scu, pickup:it.pickup, dest:it.dest,
-                  load_stop:null, pull_stop:null, grid:null});
-    });
-  });
+  missions.forEach(ms=>{ if(codeCount[ms.code]>1){ seen[ms.code]=(seen[ms.code]||0); ms.code+=String.fromCharCode(65+seen[ms.code]); seen[ms.code.slice(0,-1)]++; } });
+
+  const items=[];
+  missions.forEach(ms=>ms.items.forEach(it=>items.push({
+    mission:ms.code, commodity:it.commodity, scu:it.scu, pickup:it.pickup, dest:it.dest,
+    load_stop:null, pull_stop:null, grid:null })));
   return {items, missions};
-}
-function shortCode(loc){
-  // ARC-L2 -> L2, "Baijini" -> BP, default first letters/caps
-  if(/^L\d$/i.test(loc)) return loc.toUpperCase();
-  if(/baijini/i.test(loc)) return "BP";
-  if(/^MICL?2$/i.test(loc)) return "ML2";
-  if(/^CRUL?1$/i.test(loc)) return "CL1";
-  return loc.replace(/[^A-Za-z0-9]/g,"").slice(0,3).toUpperCase();
 }
 
 function plan(grids, route, items){
@@ -261,7 +304,8 @@ function run(){
   const out=document.getElementById("out");
   try{
     const grids=parseGrids(document.getElementById("grids").value);
-    const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean);
+    const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean).map(normalizeLoc);
+    if(!route.length) throw new Error("Add a route order — list the stations in the order you'll visit them, one per line (a location can repeat, e.g. Baijini at the start and end).");
     const {items, missions}=parseMissions(document.getElementById("missions").value);
     const inputLines=items.length;
     const res=plan(grids, route, items);
