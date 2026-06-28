@@ -64,5 +64,7 @@ grids to go around.
 
 - Screenshots of contract screens can't be read here (no OCR). Type the missions, or
   have any AI transcribe screenshots into the format above and paste that in.
-- Route ordering is your call — the planner guarantees the *cargo* is correct for the
-  order you give; it doesn't yet optimize travel distance.
+- Press **Suggest best route** to have it compute an efficient visit order from the
+  real in-game distances between stations (Stanton and Pyro, including cross-system
+  jumps). You can still edit the route by hand; the planner guarantees the cargo is
+  correct for whatever order you use.
