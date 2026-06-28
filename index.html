@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SC Cargo Grid Planner</title>
+<style>
+  :root { --bg:#f4f3f0; --card:#fff; --line:#ddd; --ink:#1a1a1a; --muted:#555; }
+  * { box-sizing: border-box; }
+  body { background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,sans-serif; font-size:15px; margin:0; padding:16px; line-height:1.45; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h2 { font-size:16px; font-weight:600; margin:18px 0 8px; }
+  p.sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:12px; }
+  label { font-size:13px; color:var(--muted); display:block; margin:6px 0 2px; }
+  textarea, input[type=text] { width:100%; font-family:ui-monospace,monospace; font-size:13px; border:1px solid var(--line); border-radius:8px; padding:8px; background:#fff; color:var(--ink); }
+  textarea { resize:vertical; }
+  button { font-size:14px; font-weight:600; border:1px solid #bbb; background:#fff; border-radius:8px; padding:8px 14px; cursor:pointer; margin:4px 6px 4px 0; }
+  button.primary { background:#185FA5; color:#fff; border-color:#185FA5; }
+  button:active { transform:scale(.98); }
+  .row { display:flex; flex-wrap:wrap; gap:12px; }
+  .row > div { flex:1; min-width:240px; }
+  .badge { display:inline-block; padding:3px 9px; border-radius:6px; font-size:12px; font-weight:600; margin:2px; color:#fff; }
+  .stop-name { font-size:15px; font-weight:600; margin-bottom:6px; }
+  .action { font-size:13px; color:var(--muted); margin:6px 0 2px; }
+  .flex-badges { display:flex; flex-wrap:wrap; gap:6px; }
+  .err { background:#fcebeb; border:1px solid #f0a; border-color:#e24b4a; color:#791f1f; padding:10px 14px; border-radius:8px; margin-bottom:10px; font-size:13px; }
+  .ok { background:#eaf3de; border:1px solid #97c459; color:#27500a; padding:10px 14px; border-radius:8px; margin-bottom:10px; font-size:13px; }
+  .ledger { width:100%; border-collapse:collapse; font-size:12px; font-family:ui-monospace,monospace; }
+  .ledger th, .ledger td { text-align:left; padding:3px 8px; border-bottom:1px solid #eee; white-space:nowrap; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:5px; background:#eee; color:#444; margin-left:6px; }
+  .clean { background:#eaf3de; color:#27500a; }
+  .mixed { background:#faeeda; color:#633806; }
+  details summary { cursor:pointer; font-weight:600; font-size:13px; }
+  @media print { .noprint { display:none; } body { padding:0; } }
+</style>
+</head>
+<body>
+<h1>Star Citizen cargo grid planner</h1>
+<p class="sub">Deterministic — the cargo math runs in your browser, no server. Works on tablet/phone/desktop.</p>
+
+<div class="panel noprint">
+  <div class="row">
+    <div>
+      <label>Ship grids (one per line: <code>name = capacity</code>)</label>
+      <textarea id="grids" rows="6">G1 = 64
+G2 = 128
+G3 = 128
+G4 = 64
+G5 = 128
+G6 = 128</textarea>
+    </div>
+    <div>
+      <label>Current location (route starts here)</label>
+      <input type="text" id="start" value="Baijini">
+      <label style="margin-top:10px">Route order (one stop per line, in visit order). A location may repeat (e.g. Baijini at start &amp; end).</label>
+      <textarea id="route" rows="4">Baijini
+L1
+L2
+L3
+L4
+L5
+Baijini
+CRUL1
+Seraphim
+Everus
+MICL2
+PortTressler
+Baijini</textarea>
+    </div>
+  </div>
+  <label style="margin-top:10px">Missions — one block per mission. <code>Pickup: LOC</code> then <code>Deliver SCU COMMODITY to DEST</code>. For multi-pickup boxes add <code>from LOC</code> on the deliver line.</label>
+  <textarea id="missions" rows="14"># BP Ice and Food
+Pickup: Baijini
+Deliver 7 Pressurized Ice to L3
+Deliver 5 Processed Food to L1
+Deliver 4 Pressurized Ice to L4
+Deliver 4 Processed Food to L3
+# BP Stims
+Pickup: Baijini
+Deliver 2 Stims to L5
+Deliver 2 Stims to L3
+Deliver 3 Stims to L2
+Deliver 3 Stims to L4
+# Waste and Scrap
+Deliver 1 Waste to Baijini from L5
+Deliver 2 Waste to Baijini from L1
+Deliver 1 Scrap to Baijini from L2
+Deliver 1 Scrap to Baijini from L4
+# L2 medium A
+Pickup: L2
+Deliver 17 Aluminum to Everus
+Deliver 19 Aluminum to Seraphim
+Deliver 34 Tungsten to Everus
+Deliver 26 Corundum to Seraphim
+# L2 medium B
+Pickup: L2
+Deliver 27 Aluminum to Seraphim
+Deliver 21 Aluminum to Everus
+Deliver 25 Tungsten to Seraphim
+Deliver 20 Tungsten to Everus
+# L1 medium
+Pickup: L1
+Deliver 27 Aluminum to Everus
+Deliver 22 Aluminum to Baijini
+Deliver 26 Tungsten to Everus
+Deliver 23 Tungsten to Baijini
+# MIC L2
+Pickup: MICL2
+Deliver 37 Quartz to PortTressler
+Deliver 35 Quartz to Baijini
+Deliver 13 Corundum to PortTressler
+Deliver 8 Corundum to Baijini
+# CRU L1
+Pickup: CRUL1
+Deliver 24 Aluminum to Baijini
+Deliver 20 Aluminum to Everus
+Deliver 26 Titanium to Baijini
+Deliver 27 Titanium to Everus
+# L2 corundum
+Pickup: L2
+Deliver 6 Corundum to Seraphim
+Deliver 5 Corundum to Everus
+Deliver 8 Corundum to Baijini</textarea>
+  <div style="margin-top:10px">
+    <button class="primary" onclick="run()">Build plan</button>
+    <button onclick="window.print()">Print</button>
+  </div>
+</div>
+
+<div id="out"></div>
+
+<script>
+const PALETTE = ["#534AB7","#0F6E56","#993C1D","#993556","#185FA5","#3B6D11","#854F0B","#A32D2D","#5F5E5A","#1a1a1a"];
+
+function parseGrids(t){
+  const g=[];
+  t.split(/\n/).forEach(l=>{ l=l.trim(); if(!l) return;
+    const m=l.match(/^(\S+)\s*=\s*(\d+)/); if(m) g.push([m[1], +m[2]]); });
+  return g;
+}
+
+function parseMissions(t){
+  // returns {items:[{mission,commodity,scu,pickup,dest}], missions:[{label,pickup,total}]}
+  const lines=t.split(/\n/);
+  let cur=null, pickup=null, missions=[], raw=[];
+  function flush(){ if(cur){ missions.push(cur); } }
+  lines.forEach(line=>{
+    const l=line.trim();
+    if(!l) return;
+    if(l.startsWith("#")){ flush(); cur={label:l.replace(/^#\s*/,""), items:[]}; pickup=null; return; }
+    let m=l.match(/^Pickup:\s*(.+)$/i);
+    if(m){ pickup=m[1].trim(); if(cur) cur.pickup=pickup; return; }
+    m=l.match(/^Deliver\s+(\d+)\s*(?:SCU\s+)?(.+?)\s+to\s+(.+?)(?:\s+from\s+(.+))?$/i);
+    if(m){
+      if(!cur){ cur={label:"Mission", items:[]}; missions.push(cur); }
+      const it={commodity:m[2].trim(), scu:+m[1], dest:m[3].trim(), pickup:(m[4]?m[4].trim():pickup)};
+      cur.items.push(it);
+      return;
+    }
+    throw new Error("Could not parse line: "+l);
+  });
+  flush();
+  // assign mission codes ORIGIN-TOTAL with letter suffix for collisions
+  const items=[];
+  const codeCount={};
+  missions.forEach(ms=>{
+    const total=ms.items.reduce((a,b)=>a+b.scu,0);
+    // origin token = the (first) pickup short
+    const origins=[...new Set(ms.items.map(i=>i.pickup))];
+    let origin = ms.pickup || origins[0] || "X";
+    const base = shortCode(origin)+"-"+total;
+    ms.code = base;
+    codeCount[base]=(codeCount[base]||0)+1;
+  });
+  // resolve collisions
+  const seen={};
+  missions.forEach(ms=>{
+    if(codeCount[ms.code]>1){
+      seen[ms.code]=(seen[ms.code]||0);
+      ms.code = ms.code + String.fromCharCode(65+seen[ms.code]);
+      seen[ms.code.slice(0,-1)]++;
+    }
+  });
+  missions.forEach(ms=>{
+    ms.items.forEach(it=>{
+      items.push({mission:ms.code, commodity:it.commodity, scu:it.scu, pickup:it.pickup, dest:it.dest,
+                  load_stop:null, pull_stop:null, grid:null});
+    });
+  });
+  return {items, missions};
+}
+function shortCode(loc){
+  // ARC-L2 -> L2, "Baijini" -> BP, default first letters/caps
+  if(/^L\d$/i.test(loc)) return loc.toUpperCase();
+  if(/baijini/i.test(loc)) return "BP";
+  if(/^MICL?2$/i.test(loc)) return "ML2";
+  if(/^CRUL?1$/i.test(loc)) return "CL1";
+  return loc.replace(/[^A-Za-z0-9]/g,"").slice(0,3).toUpperCase();
+}
+
+function plan(grids, route, items){
+  const cap={}; grids.forEach(([n,c])=>cap[n]=c);
+  const names=grids.map(g=>g[0]);
+  const L=route.length;
+  // load/pull stops
+  for(const it of items){
+    it.load_stop=null; it.pull_stop=null; it.grid=null;
+    for(let s=0;s<L;s++){ if(route[s]===it.pickup){ it.load_stop=s; break; } }
+    if(it.load_stop===null) throw new Error(`Route never visits pickup "${it.pickup}" for ${it.mission} ${it.commodity}`);
+    for(let s=it.load_stop+1;s<L;s++){ if(route[s]===it.dest){ it.pull_stop=s; break; } }
+    if(it.pull_stop===null) throw new Error(`Route never visits destination "${it.dest}" after pickup for ${it.mission} ${it.commodity}`);
+  }
+  // timeline assignment (capacity hard, one-dest-per-grid preferred)
+  const timeline={}, destsOn={};
+  names.forEach(n=>{ timeline[n]=new Array(L).fill(0); destsOn[n]=Array.from({length:L},()=>new Set()); });
+  const ivl=it=>{const a=[];for(let s=it.load_stop;s<it.pull_stop;s++)a.push(s);return a;};
+  const fits=(g,it)=>ivl(it).every(s=>timeline[g][s]+it.scu<=cap[g]);
+  const mixCost=(g,it)=>{const o=new Set();ivl(it).forEach(s=>destsOn[g][s].forEach(d=>{if(d!==it.dest)o.add(d);}));return o.size;};
+  const commit=(g,it)=>{it.grid=g;ivl(it).forEach(s=>{timeline[g][s]+=it.scu;destsOn[g][s].add(it.dest);});};
+  const order=[...items].sort((a,b)=> b.scu-a.scu || a.load_stop-b.load_stop);
+  for(const it of order){
+    const cands=names.filter(g=>fits(g,it));
+    if(!cands.length) throw new Error(`No grid can hold ${it.mission} ${it.commodity} ${it.scu} SCU at the same time as everything else aboard. Try freeing space (deliver earlier) or a bigger ship.`);
+    const score=g=>{
+      const mine=ivl(it).some(s=>destsOn[g][s].has(it.dest));
+      return [mixCost(g,it), mine?0:1, cap[g], names.indexOf(g)];
+    };
+    cands.sort((a,b)=>{const sa=score(a),sb=score(b);for(let i=0;i<sa.length;i++){if(sa[i]!==sb[i])return sa[i]-sb[i];}return 0;});
+    commit(cands[0],it);
+  }
+  // simulate + verify
+  const gridItems={}; names.forEach(n=>gridItems[n]=new Set());
+  const peak={}; names.forEach(n=>peak[n]=0);
+  const errors=[];
+  const gload=g=>[...gridItems[g]].reduce((a,id)=>a+items[id].scu,0);
+  items.forEach((it,i)=>it._id=i);
+  const stops=[];
+  for(let s=0;s<L;s++){
+    const pulls=items.filter(it=>it.pull_stop===s);
+    const loads=items.filter(it=>it.load_stop===s);
+    pulls.forEach(it=>{ if(!gridItems[it.grid].has(it._id)) errors.push(`Stop ${s+1} ${route[s]}: ${it.mission} ${it.commodity} not on ${it.grid} when pulled`); gridItems[it.grid].delete(it._id); });
+    loads.forEach(it=>{ gridItems[it.grid].add(it._id); const gl=gload(it.grid); if(gl>cap[it.grid]) errors.push(`Stop ${s+1} ${route[s]}: ${it.grid} OVERFLOW ${gl}/${cap[it.grid]}`); peak[it.grid]=Math.max(peak[it.grid],gl); });
+    stops.push({s, loc:route[s], pulls, loads});
+  }
+  return {cap, names, peak, errors, stops};
+}
+
+function balanceCheck(missions){
+  // per mission+commodity, sum of pickup SCU == sum delivered (here every deliver is a stack, so just report totals)
+  // (kept simple: the format ties each delivered box to its own pickup, so balance holds by construction;
+  //  this hook is where contract-vs-input mismatches would be flagged.)
+  return [];
+}
+
+function colorFor(missions){ const map={}; missions.forEach((m,i)=>map[m.code]=PALETTE[i%PALETTE.length]); return map; }
+
+function badge(it,color){ return `<span class="badge" style="background:${color[it.mission]}">${it.mission}: ${it.commodity} ${it.scu}</span>`; }
+
+function run(){
+  const out=document.getElementById("out");
+  try{
+    const grids=parseGrids(document.getElementById("grids").value);
+    const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean);
+    const {items, missions}=parseMissions(document.getElementById("missions").value);
+    const inputLines=items.length;
+    const res=plan(grids, route, items);
+    const color=colorFor(missions);
+    // destination totals
+    const dt={}; items.forEach(it=>dt[it.dest]=(dt[it.dest]||0)+it.scu);
+    const total=items.reduce((a,b)=>a+b.scu,0);
+    const shipCap=grids.reduce((a,b)=>a+b[1],0);
+
+    let html="";
+    if(res.errors.length){
+      html+=`<div class="err"><b>${res.errors.length} problem(s) found — do not fly this:</b><br>`+res.errors.map(e=>"• "+e).join("<br>")+`</div>`;
+    } else {
+      html+=`<div class="ok"><b>All checks passed.</b> ${items.length} cargo stacks, every one loaded once and delivered to the correct station, no grid ever over capacity.</div>`;
+    }
+    // summary
+    html+=`<div class="panel"><b>Summary</b> &middot; total cargo ${total} SCU of ${shipCap} ship capacity<br>`;
+    html+=`<span style="font-size:13px;color:#555">Per destination: `+Object.entries(dt).sort().map(([k,v])=>`${k} ${v}`).join(" · ")+`</span><br>`;
+    html+=`<span style="font-size:13px;color:#555">Peak grid load: `+res.names.map(n=>`${n} ${res.peak[n]}/${res.cap[n]}`).join(" · ")+`</span></div>`;
+
+    // legend
+    html+=`<div class="panel"><b>Missions</b><div class="flex-badges" style="margin-top:6px">`+
+      missions.map(m=>`<span class="badge" style="background:${color[m.code]}">${m.code} — ${m.label}</span>`).join("")+`</div></div>`;
+
+    // stop cards
+    html+=`<h2>Route</h2>`;
+    res.stops.forEach(st=>{
+      const grpPull={}, grpLoad={};
+      st.pulls.forEach(it=>{(grpPull[it.grid]=grpPull[it.grid]||[]).push(it);});
+      st.loads.forEach(it=>{(grpLoad[it.grid]=grpLoad[it.grid]||[]).push(it);});
+      if(!st.pulls.length && !st.loads.length && st.s!==0) return;
+      html+=`<div class="panel"><div class="stop-name">Stop ${st.s+1} — ${st.loc}</div>`;
+      Object.keys(grpPull).sort().forEach(g=>{
+        html+=`<div class="action">Pull off <b>${g}</b>:</div><div class="flex-badges">`+merge(grpPull[g]).map(it=>badge(it,color)).join("")+`</div>`;
+      });
+      Object.keys(grpLoad).sort().forEach(g=>{
+        html+=`<div class="action">Load onto <b>${g}</b>:</div><div class="flex-badges">`+merge(grpLoad[g]).map(it=>badge(it,color)).join("")+`</div>`;
+      });
+      html+=`</div>`;
+    });
+
+    // ledger
+    html+=`<details class="panel"><summary>Delivery ledger (${items.length} stacks)</summary>`+
+      `<table class="ledger"><tr><th>Mission</th><th>Commodity</th><th>SCU</th><th>Destination</th><th>Grid</th><th>Load</th><th>Pull</th></tr>`+
+      items.slice().sort((a,b)=>a.pull_stop-b.pull_stop || a.grid.localeCompare(b.grid)).map(it=>
+        `<tr><td>${it.mission}</td><td>${it.commodity}</td><td>${it.scu}</td><td>${it.dest}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
+      `</table></details>`;
+
+    out.innerHTML=html;
+  }catch(e){
+    out.innerHTML=`<div class="err"><b>Couldn't build the plan:</b><br>${e.message}</div>`;
+  }
+}
+
+// merge stacks with same mission+commodity (same grid already, same dest-area) into one summed badge
+function merge(arr){
+  const map={};
+  arr.forEach(it=>{ const k=it.mission+"|"+it.commodity; if(!map[k]) map[k]={...it}; else map[k]={...map[k],scu:map[k].scu+it.scu}; });
+  return Object.values(map);
+}
+
+window.addEventListener("DOMContentLoaded",run);
+</script>
+</body>
+</html>
