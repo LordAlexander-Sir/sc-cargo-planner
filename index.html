@@ -792,33 +792,49 @@ function onShipPick(){
   rebuildGridRows();                          // (re)distribute the new total across the grids
 }
 
-// Build N capacity rows, pre-filling them by splitting the picked ship's SCU as evenly as
-// possible (remainder spread one-per-grid). Writes through to the hidden #grids text store.
+// Build N empty capacity rows, then let redistribute() fill them by splitting the ship's
+// SCU evenly. Writes through to the hidden #grids text store.
 function rebuildGridRows(){
   const n=Math.max(0,Math.min(50, parseInt(document.getElementById("grid-count").value)||0));
   const wrap=document.getElementById("grid-rows"); wrap.innerHTML="";
-  const total=+document.getElementById("ship-select").value||0;
-  let caps=[];
-  if(n>0 && total>0){ const base=Math.floor(total/n), rem=total-base*n;
-    caps=Array.from({length:n},(_,i)=>base+(i<rem?1:0)); }
-  for(let i=0;i<n;i++) addGridRow("G"+(i+1), caps.length?caps[i]:"");
-  syncRowsToText();
+  for(let i=0;i<n;i++) addGridRow("G"+(i+1), "");
+  redistribute();
 }
-function addGridRow(name,cap){
+function addGridRow(name,cap,locked){
   const wrap=document.getElementById("grid-rows");
   const row=document.createElement("div");
-  row.className="grow";
+  row.className="grow"; if(locked) row.dataset.locked="1";
   row.style.cssText="display:flex;gap:6px;align-items:center;margin-bottom:6px";
   row.innerHTML=
     `<input type="text" class="g-name" value="${name||""}" style="flex:1;min-width:70px" title="grid name">`+
     `<span style="color:var(--text-dim)">=</span>`+
     `<input type="number" class="g-cap" min="0" value="${cap!==""&&cap!=null?cap:""}" placeholder="SCU" style="width:96px">`+
-    `<button type="button" title="remove this grid" onclick="this.parentNode.remove();bumpGridCount();syncRowsToText()">✕</button>`;
+    `<button type="button" title="remove this grid" onclick="this.parentNode.remove();bumpGridCount();redistribute()">✕</button>`;
   wrap.appendChild(row);
   row.querySelector(".g-name").addEventListener("input",syncRowsToText);
-  row.querySelector(".g-cap").addEventListener("input",syncRowsToText);
+  const capEl=row.querySelector(".g-cap");
+  // Editing a capacity "pins" that grid; the others re-split the remaining SCU around it.
+  capEl.addEventListener("input",()=>{ row.dataset.locked = capEl.value.trim()?"1":""; redistribute(); });
 }
 function bumpGridCount(){ document.getElementById("grid-count").value=document.querySelectorAll("#grid-rows .grow").length||""; }
+
+// Keep the grids summing to ship capacity: pinned (manually-set) grids hold their value,
+// and the rest split whatever SCU is left over, as evenly as possible.
+function redistribute(){
+  const total=+document.getElementById("ship-select").value||0;
+  const rows=[...document.querySelectorAll("#grid-rows .grow")];
+  if(total>0){
+    const isPinned=r=>r.dataset.locked==="1" && r.querySelector(".g-cap").value.trim()!=="";
+    const pinned=rows.filter(isPinned), open=rows.filter(r=>!isPinned(r));
+    const pinnedSum=pinned.reduce((a,r)=>a+(+r.querySelector(".g-cap").value||0),0);
+    if(open.length){
+      const remaining=Math.max(0, total-pinnedSum);
+      const base=Math.floor(remaining/open.length), rem=remaining-base*open.length;
+      open.forEach((r,i)=>{ r.querySelector(".g-cap").value=base+(i<rem?1:0); });
+    }
+  }
+  syncRowsToText();
+}
 // Builder rows -> the canonical #grids text the engine reads.
 function syncRowsToText(){
   const lines=[...document.querySelectorAll("#grid-rows .grow")].map(r=>{
@@ -829,11 +845,11 @@ function syncRowsToText(){
   document.getElementById("grids").value=lines.join("\n");
   checkGridSum();
 }
-// Advanced text box -> rebuild the rows (keeps the two views in sync).
+// Advanced text box -> rebuild the rows (values are authoritative, so pin them all).
 function textToRows(){
   const wrap=document.getElementById("grid-rows"); wrap.innerHTML="";
   const g=parseGrids(document.getElementById("grids").value);
-  g.forEach(([n,c])=>addGridRow(n,c));
+  g.forEach(([n,c])=>addGridRow(n,c,true));
   document.getElementById("grid-count").value=g.length||"";
   checkGridSum();
 }
