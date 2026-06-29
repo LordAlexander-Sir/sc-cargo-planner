@@ -241,7 +241,7 @@ Baijini"></textarea>
     </div>
   </div>
   <details style="background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:10px 14px;margin:14px 0">
-    <summary>Have screenshots? Let an AI read them</summary>
+    <summary>Have screenshots? Let an AI read them<span class="help-wrap"><span class="help-i" onclick="toggleHelp(this,event)">?</span><span class="help-pop"><b>Turn contract screenshots into a mission list</b><br>Typing out a screen full of deliveries is tedious. This planner doesn't read images itself (by design — it stays a simple, private page), but an AI chat tool can.<br><br>Pick a tool below to open it, <b>upload your contract screenshots</b> along with the <b>Copy transcription prompt</b> text, and the AI will write the deliveries out in the exact format this planner expects.<br><br>Paste its reply into the <b>Missions</b> box, then press Build plan. Always glance over the numbers — the AI does the typing, but the planner does the math and verifies it.</span></span></summary>
     <p style="font-size:13px;color:var(--text-dim);margin:10px 0">Open one of these, upload your contract screenshots together with the prompt below, then paste the AI's reply into the Missions box.</p>
     <div>
       <button onclick="openAI('https://chatgpt.com')">ChatGPT ↗</button>
@@ -835,7 +835,7 @@ function bumpGridCount(){ document.getElementById("grid-count").value=document.q
 
 // Click-to-open help popovers (one open at a time; click anywhere else closes them).
 function toggleHelp(el,ev){
-  ev.stopPropagation();
+  ev.stopPropagation(); ev.preventDefault();  // don't let a click inside a <summary> toggle its <details>
   const wrap=el.closest(".help-wrap");
   document.querySelectorAll(".help-wrap.open").forEach(w=>{ if(w!==wrap) w.classList.remove("open"); });
   wrap.classList.toggle("open");
