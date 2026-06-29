@@ -205,13 +205,17 @@ G3 = 128"></textarea>
     <div>
       <label>Current location (route starts here)</label>
       <input type="text" id="start" placeholder="e.g. Baijini Point">
-      <label style="margin-top:10px">Route order (one stop per line, in visit order). A location may repeat (e.g. Baijini at start &amp; end). Leave blank and use Suggest below, or fill in yourself.</label>
-      <textarea id="route" rows="4" placeholder="Baijini
+      <p style="font-size:12px;color:var(--text-dim);margin-top:10px;line-height:1.6">When you press <b>Build plan</b>, the best stop order is worked out for you from real station distances. No need to plan the route yourself.</p>
+      <details style="background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:10px 14px;margin-top:10px">
+        <summary>Override route order (optional)</summary>
+        <label style="margin-top:8px">One stop per line, in visit order. A location may repeat (e.g. Baijini at start &amp; end). Leave blank to auto-route.</label>
+        <textarea id="route" rows="4" placeholder="Baijini
 L1
 L2
 ...
 Baijini"></textarea>
-      <button onclick="suggestRoute()" style="margin-top:6px">Suggest best route (uses real distances) ⟲</button>
+        <button onclick="suggestRoute()" style="margin-top:6px">Preview auto route ⟲</button>
+      </details>
     </div>
   </div>
   <details style="background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:10px 14px;margin:14px 0">
@@ -675,8 +679,9 @@ function run(){
     items.forEach((it,i)=>it._uid=i);
 
     if(total<=shipCap){
-      const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean).map(normalizeLoc);
-      if(!route.length) throw new Error("Add a route order — list the stations in the order you'll visit them, one per line (a location can repeat, e.g. Baijini at the start and end).");
+      const startLoc=normalizeLoc(document.getElementById("start").value.trim()||items[0].pickup);
+      const manual=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean).map(normalizeLoc);
+      const route=manual.length?manual:dedupeConsec(twoOpt(greedyRoute(items, startLoc), items));
       const res=plan(grids, route, items);
       const recon=reconcile(items, [{items, res}]);
       if(recon.length) html+=`<div class="err"><b>Integrity check failed (${recon.length}) — do not fly this:</b><br>`+recon.map(e=>"• "+e).join("<br>")+`</div>`;
@@ -694,7 +699,7 @@ function run(){
         if(recon.length) html+=`<div class="err"><b>Whole-haul integrity check failed (${recon.length}) — do not fly this:</b><br>`+recon.map(e=>"• "+e).join("<br>")+`</div>`;
         if(tripErrs) html+=`<div class="err"><b>${tripErrs} problem(s) inside individual trips — do not fly this.</b></div>`;
       }
-      html+=`<div class="panel"><b>${total} SCU across ${items.length} delivery stacks won't fit in one ${shipCap} SCU trip.</b> Auto-split into ${trips.length} round trips (largest stacks first, packed to fill each trip). The manual Route box is ignored here — each trip routes itself.</div>`;
+      html+=`<div class="panel"><b>${total} SCU across ${items.length} delivery stacks won't fit in one ${shipCap} SCU trip.</b> Auto-split into ${trips.length} round trips (largest stacks first, packed to fill each trip), each routed automatically. Any manual route override doesn't apply across multiple trips.</div>`;
       trips.forEach((t,i)=>{
         html+=renderTrip(grids, t.route, t.items, color, `Trip ${i+1} of ${trips.length} (${t.items.reduce((a,b)=>a+b.scu,0)} SCU)`, t.res).html;
       });
