@@ -384,66 +384,94 @@ function colorFor(missions){ const map={}; missions.forEach((m,i)=>map[m.code]=P
 
 function badge(it,color){ return `<span class="badge" style="background:${color[it.mission]}">${it.mission}: ${it.commodity} ${it.scu}${it._splitLabel||""}</span>`; }
 
+// Greedy first-fit-decreasing bin packing: each mission stack is an atomic unit
+// (a box can't be split across trips), so pack largest-first into the earliest
+// trip that still has room, opening a new trip whenever none does.
+function batchItems(items, cap){
+  const sorted=[...items].sort((a,b)=>b.scu-a.scu);
+  const oversized=sorted.find(it=>it.scu>cap);
+  if(oversized) throw new Error(`${oversized.mission} ${oversized.commodity} is a single ${oversized.scu} SCU delivery, which is bigger than your ship's entire ${cap} SCU capacity even empty. It can't be split across trips — it needs a bigger ship.`);
+  const batches=[];
+  sorted.forEach(it=>{
+    const b=batches.find(b=>b.used+it.scu<=cap);
+    if(b){ b.items.push(it); b.used+=it.scu; } else batches.push({items:[it], used:it.scu});
+  });
+  return batches.map(b=>b.items);
+}
+
+function renderTrip(grids, route, items, missions, color, heading){
+  const res=plan(grids, route, items);
+  const dt={}; items.forEach(it=>dt[it.dest]=(dt[it.dest]||0)+it.scu);
+  const total=items.reduce((a,b)=>a+b.scu,0);
+  const shipCap=grids.reduce((a,b)=>a+b[1],0);
+
+  let html=heading?`<h2>${heading}</h2>`:"";
+  if(res.errors.length){
+    html+=`<div class="err"><b>${res.errors.length} problem(s) found — do not fly this:</b><br>`+res.errors.map(e=>"• "+e).join("<br>")+`</div>`;
+  } else {
+    html+=`<div class="ok"><b>All checks passed.</b> ${items.length} cargo stacks, every one loaded once and delivered to the correct station, no grid ever over capacity.</div>`;
+  }
+  html+=`<div class="panel"><b>Summary</b> &middot; total cargo ${total} SCU of ${shipCap} ship capacity &middot; route ~${Math.round(routeDistance(route))} Gm<br>`;
+  html+=`<span style="font-size:13px;color:#555">Per destination: `+Object.entries(dt).sort().map(([k,v])=>`${k} ${v}`).join(" · ")+`</span><br>`;
+  html+=`<span style="font-size:13px;color:#555">Peak grid load: `+res.names.map(n=>`${n} ${res.peak[n]}/${res.cap[n]}`).join(" · ")+`</span></div>`;
+
+  html+=`<h3 style="font-size:14px;margin:10px 0 6px">Route</h3>`;
+  res.stops.forEach(st=>{
+    const grpPull={}, grpLoad={};
+    st.pulls.forEach(it=>{(grpPull[it.grid]=grpPull[it.grid]||[]).push(it);});
+    st.loads.forEach(it=>{(grpLoad[it.grid]=grpLoad[it.grid]||[]).push(it);});
+    if(!st.pulls.length && !st.loads.length && st.s!==0) return;
+    html+=`<div class="panel"><div class="stop-name">Stop ${st.s+1} — ${st.loc}</div>`;
+    Object.keys(grpPull).sort().forEach(g=>{
+      html+=`<div class="action">Pull off <b>${g}</b>:</div><div class="flex-badges">`+merge(grpPull[g]).map(it=>badge(it,color)).join("")+`</div>`;
+    });
+    Object.keys(grpLoad).sort().forEach(g=>{
+      html+=`<div class="action">Load onto <b>${g}</b>:</div><div class="flex-badges">`+merge(grpLoad[g]).map(it=>badge(it,color)).join("")+`</div>`;
+    });
+    html+=`</div>`;
+  });
+
+  html+=`<details class="panel"><summary>Delivery ledger (${res.items.length} grid placements${res.items.length!==items.length?`, from ${items.length} mission stacks`:""})</summary>`+
+    `<table class="ledger"><tr><th>Mission</th><th>Commodity</th><th>SCU</th><th>Destination</th><th>Grid</th><th>Load</th><th>Pull</th></tr>`+
+    res.items.slice().sort((a,b)=>a.pull_stop-b.pull_stop || a.grid.localeCompare(b.grid)).map(it=>
+      `<tr><td>${it.mission}</td><td>${it.commodity}${it._splitLabel||""}</td><td>${it.scu}</td><td>${it.dest}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
+    `</table></details>`;
+  return {html, errors:res.errors};
+}
+
 function run(){
   const out=document.getElementById("out");
   try{
     const grids=parseGrids(document.getElementById("grids").value);
-    const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean).map(normalizeLoc);
-    if(!route.length) throw new Error("Add a route order — list the stations in the order you'll visit them, one per line (a location can repeat, e.g. Baijini at the start and end).");
     const {items, missions}=parseMissions(document.getElementById("missions").value);
-    const inputLines=items.length;
-    const shipCapEarly=grids.reduce((a,b)=>a+b[1],0);
-    const totalEarly=items.reduce((a,b)=>a+b.scu,0);
-    if(totalEarly>shipCapEarly){
-      const byPickup={}; items.forEach(it=>{byPickup[it.pickup]=(byPickup[it.pickup]||0)+it.scu;});
-      const worst=Object.entries(byPickup).sort((a,b)=>b[1]-a[1])[0];
-      throw new Error(`These missions total ${totalEarly} SCU, which is more than your ship's ${shipCapEarly} SCU capacity — by itself, ${worst[0]} alone has ${worst[1]} SCU waiting to be picked up. This can't be done in a single continuous run no matter how the grids or route are arranged; it needs ${Math.ceil(totalEarly/shipCapEarly)}+ separate trips. Split the missions into smaller batches (one batch per trip, each under ${shipCapEarly} SCU) and build a plan for each batch separately.`);
-    }
-    const res=plan(grids, route, items);
     const color=colorFor(missions);
-    // destination totals
-    const dt={}; items.forEach(it=>dt[it.dest]=(dt[it.dest]||0)+it.scu);
-    const total=items.reduce((a,b)=>a+b.scu,0);
     const shipCap=grids.reduce((a,b)=>a+b[1],0);
+    const total=items.reduce((a,b)=>a+b.scu,0);
 
     let html="";
-    if(res.errors.length){
-      html+=`<div class="err"><b>${res.errors.length} problem(s) found — do not fly this:</b><br>`+res.errors.map(e=>"• "+e).join("<br>")+`</div>`;
-    } else {
-      html+=`<div class="ok"><b>All checks passed.</b> ${items.length} cargo stacks, every one loaded once and delivered to the correct station, no grid ever over capacity.</div>`;
-    }
-    // summary
-    html+=`<div class="panel"><b>Summary</b> &middot; total cargo ${total} SCU of ${shipCap} ship capacity &middot; route ~${Math.round(routeDistance(route))} Gm<br>`;
-    html+=`<span style="font-size:13px;color:#555">Per destination: `+Object.entries(dt).sort().map(([k,v])=>`${k} ${v}`).join(" · ")+`</span><br>`;
-    html+=`<span style="font-size:13px;color:#555">Peak grid load: `+res.names.map(n=>`${n} ${res.peak[n]}/${res.cap[n]}`).join(" · ")+`</span></div>`;
-
-    // legend
+    // legend (shared across trips)
     html+=`<div class="panel"><b>Missions</b><div class="flex-badges" style="margin-top:6px">`+
       missions.map(m=>`<span class="badge" style="background:${color[m.code]}">${m.code} — ${m.label}</span>`).join("")+`</div></div>`;
 
-    // stop cards
-    html+=`<h2>Route</h2>`;
-    res.stops.forEach(st=>{
-      const grpPull={}, grpLoad={};
-      st.pulls.forEach(it=>{(grpPull[it.grid]=grpPull[it.grid]||[]).push(it);});
-      st.loads.forEach(it=>{(grpLoad[it.grid]=grpLoad[it.grid]||[]).push(it);});
-      if(!st.pulls.length && !st.loads.length && st.s!==0) return;
-      html+=`<div class="panel"><div class="stop-name">Stop ${st.s+1} — ${st.loc}</div>`;
-      Object.keys(grpPull).sort().forEach(g=>{
-        html+=`<div class="action">Pull off <b>${g}</b>:</div><div class="flex-badges">`+merge(grpPull[g]).map(it=>badge(it,color)).join("")+`</div>`;
+    if(total<=shipCap){
+      const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean).map(normalizeLoc);
+      if(!route.length) throw new Error("Add a route order — list the stations in the order you'll visit them, one per line (a location can repeat, e.g. Baijini at the start and end).");
+      const {html:tripHtml}=renderTrip(grids, route, items, missions, color, null);
+      html+=tripHtml;
+    } else {
+      // Doesn't fit in one trip — auto-split into the fewest possible round trips and
+      // auto-route each one (the manual Route box is ignored in this mode).
+      const batches=batchItems(items, shipCap);
+      const startLoc=normalizeLoc(document.getElementById("start").value.trim()||items[0].pickup);
+      html+=`<div class="ok"><b>${total} SCU across ${items.length} delivery stacks won't fit in one ${shipCap} SCU trip.</b> Auto-split into ${batches.length} round trips (largest stacks first, packed to fill each trip). Manual route order is ignored while in this mode — each trip routes itself.</div>`;
+      let cur=startLoc;
+      batches.forEach((batchItemsList,i)=>{
+        const route=dedupeConsec(twoOpt(greedyRoute(batchItemsList, cur), batchItemsList));
+        const {html:tripHtml}=renderTrip(grids, route, batchItemsList, missions, color, `Trip ${i+1} of ${batches.length} (${batchItemsList.reduce((a,b)=>a+b.scu,0)} SCU)`);
+        html+=tripHtml;
+        cur=route[route.length-1];
       });
-      Object.keys(grpLoad).sort().forEach(g=>{
-        html+=`<div class="action">Load onto <b>${g}</b>:</div><div class="flex-badges">`+merge(grpLoad[g]).map(it=>badge(it,color)).join("")+`</div>`;
-      });
-      html+=`</div>`;
-    });
-
-    // ledger
-    html+=`<details class="panel"><summary>Delivery ledger (${res.items.length} grid placements${res.items.length!==items.length?`, from ${items.length} mission stacks`:""})</summary>`+
-      `<table class="ledger"><tr><th>Mission</th><th>Commodity</th><th>SCU</th><th>Destination</th><th>Grid</th><th>Load</th><th>Pull</th></tr>`+
-      res.items.slice().sort((a,b)=>a.pull_stop-b.pull_stop || a.grid.localeCompare(b.grid)).map(it=>
-        `<tr><td>${it.mission}</td><td>${it.commodity}${it._splitLabel||""}</td><td>${it.scu}</td><td>${it.dest}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
-      `</table></details>`;
+    }
 
     out.innerHTML=html;
   }catch(e){
