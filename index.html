@@ -194,13 +194,20 @@ details summary:hover { color:var(--cyan); }
 <div class="panel noprint">
   <div class="row">
     <div>
-      <label>Pick your ship (fills total SCU — you still define your own grids/zones below)</label>
+      <label>Pick your ship (fills total SCU)</label>
       <select id="ship-select" onchange="onShipPick()"><option value="">— custom / not listed —</option></select>
-      <label style="margin-top:10px">Ship grids or zones (one per line: <code>name = capacity</code>). Single-grid ship? Split it into as many zones as you want to keep cargo separated.</label>
-      <textarea id="grids" rows="6" oninput="checkGridSum()" placeholder="G1 = 64
+      <label style="margin-top:10px">How many cargo grids / zones?</label>
+      <input type="number" id="grid-count" min="1" max="50" oninput="rebuildGridRows()" placeholder="e.g. 6">
+      <p style="font-size:12px;color:var(--text-dim);margin-top:4px;line-height:1.6">Set how many separate grids (or zones you want to keep cargo apart in). We split the ship's capacity evenly — tweak any grid that's a different size.</p>
+      <div id="grid-rows" style="margin-top:6px"></div>
+      <div id="grid-sum-check" style="font-size:13px;margin-top:4px;color:var(--muted)"></div>
+      <details style="margin-top:8px">
+        <summary>Edit as text (advanced)</summary>
+        <label style="margin-top:6px">One per line: <code>name = capacity</code></label>
+        <textarea id="grids" rows="5" oninput="textToRows()" placeholder="G1 = 64
 G2 = 128
 G3 = 128"></textarea>
-      <div id="grid-sum-check" style="font-size:13px;margin-top:4px;color:var(--muted)"></div>
+      </details>
     </div>
     <div>
       <label>Current location (route starts here)</label>
@@ -362,7 +369,7 @@ function suggestRoute(){
 function parseGrids(t){
   const g=[];
   t.split(/\n/).forEach(l=>{ l=l.trim(); if(!l) return;
-    const m=l.match(/^(\S+)\s*=\s*(\d+)/); if(m) g.push([m[1], +m[2]]); });
+    const m=l.match(/^(.+?)\s*=\s*(\d+)/); if(m) g.push([m[1].trim(), +m[2]]); });
   return g;
 }
 
@@ -778,11 +785,56 @@ function initShipPicker(){
   });
 }
 function onShipPick(){
-  const sel=document.getElementById("ship-select");
-  const scu=+sel.value;
+  const scu=+document.getElementById("ship-select").value;
   if(!scu) return;
-  const ta=document.getElementById("grids");
-  if(!ta.value.trim()) ta.value=`G1 = ${scu}`;
+  const gc=document.getElementById("grid-count");
+  if(!gc.value || +gc.value<1) gc.value=1;   // default to one grid the player can split
+  rebuildGridRows();                          // (re)distribute the new total across the grids
+}
+
+// Build N capacity rows, pre-filling them by splitting the picked ship's SCU as evenly as
+// possible (remainder spread one-per-grid). Writes through to the hidden #grids text store.
+function rebuildGridRows(){
+  const n=Math.max(0,Math.min(50, parseInt(document.getElementById("grid-count").value)||0));
+  const wrap=document.getElementById("grid-rows"); wrap.innerHTML="";
+  const total=+document.getElementById("ship-select").value||0;
+  let caps=[];
+  if(n>0 && total>0){ const base=Math.floor(total/n), rem=total-base*n;
+    caps=Array.from({length:n},(_,i)=>base+(i<rem?1:0)); }
+  for(let i=0;i<n;i++) addGridRow("G"+(i+1), caps.length?caps[i]:"");
+  syncRowsToText();
+}
+function addGridRow(name,cap){
+  const wrap=document.getElementById("grid-rows");
+  const row=document.createElement("div");
+  row.className="grow";
+  row.style.cssText="display:flex;gap:6px;align-items:center;margin-bottom:6px";
+  row.innerHTML=
+    `<input type="text" class="g-name" value="${name||""}" style="flex:1;min-width:70px" title="grid name">`+
+    `<span style="color:var(--text-dim)">=</span>`+
+    `<input type="number" class="g-cap" min="0" value="${cap!==""&&cap!=null?cap:""}" placeholder="SCU" style="width:96px">`+
+    `<button type="button" title="remove this grid" onclick="this.parentNode.remove();bumpGridCount();syncRowsToText()">✕</button>`;
+  wrap.appendChild(row);
+  row.querySelector(".g-name").addEventListener("input",syncRowsToText);
+  row.querySelector(".g-cap").addEventListener("input",syncRowsToText);
+}
+function bumpGridCount(){ document.getElementById("grid-count").value=document.querySelectorAll("#grid-rows .grow").length||""; }
+// Builder rows -> the canonical #grids text the engine reads.
+function syncRowsToText(){
+  const lines=[...document.querySelectorAll("#grid-rows .grow")].map(r=>{
+    const name=r.querySelector(".g-name").value.trim()||"G";
+    const cap=r.querySelector(".g-cap").value.trim();
+    return cap?`${name} = ${cap}`:null;
+  }).filter(Boolean);
+  document.getElementById("grids").value=lines.join("\n");
+  checkGridSum();
+}
+// Advanced text box -> rebuild the rows (keeps the two views in sync).
+function textToRows(){
+  const wrap=document.getElementById("grid-rows"); wrap.innerHTML="";
+  const g=parseGrids(document.getElementById("grids").value);
+  g.forEach(([n,c])=>addGridRow(n,c));
+  document.getElementById("grid-count").value=g.length||"";
   checkGridSum();
 }
 function checkGridSum(){
@@ -874,6 +926,7 @@ function initBuilder(){
 window.addEventListener("DOMContentLoaded",()=>{
   initBuilder();
   initShipPicker();
+  if(document.getElementById("grids").value.trim()) textToRows(); // restore rows from any saved text
   checkGridSum();
   if(document.getElementById("missions").value.trim()) run();
   else document.getElementById("out").innerHTML='<div class="panel" style="color:var(--muted)">Add your missions above (paste, build by hand, or have an AI transcribe screenshots), then press <b>Build plan</b>.</div>';
