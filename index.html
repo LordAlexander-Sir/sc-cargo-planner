@@ -400,23 +400,61 @@ function colorFor(missions){ const map={}; missions.forEach((m,i)=>map[m.code]=P
 
 function badge(it,color){ return `<span class="badge" style="background:${color[it.mission]}">${it.mission}: ${it.commodity} ${it.scu}${it._splitLabel||""}</span>`; }
 
-// Greedy first-fit-decreasing bin packing: each mission stack is an atomic unit
-// (a box can't be split across trips), so pack largest-first into the earliest
-// trip that still has room, opening a new trip whenever none does.
-function batchItems(items, cap){
-  const sorted=[...items].sort((a,b)=>b.scu-a.scu);
-  const oversized=sorted.find(it=>it.scu>cap);
-  if(oversized) throw new Error(`${oversized.mission} ${oversized.commodity} is a single ${oversized.scu} SCU delivery, which is bigger than your ship's entire ${cap} SCU capacity even empty. It can't be split across trips — it needs a bigger ship.`);
-  const batches=[];
-  sorted.forEach(it=>{
-    const b=batches.find(b=>b.used+it.scu<=cap);
-    if(b){ b.items.push(it); b.used+=it.scu; } else batches.push({items:[it], used:it.scu});
-  });
-  return batches.map(b=>b.items);
+// Build a sequence of trips that are EACH guaranteed to pack (no plan() errors).
+// Greedy first-fit-decreasing by total SCU gives a candidate trip; we then route &
+// plan it and, if per-grid packing fails, peel the largest stack back out and retry.
+// A single stack <= total capacity always packs (it splits across grids), so the
+// peel loop always terminates with flyable trips.
+function buildTrips(items, grids, startLoc){
+  const shipCap=grids.reduce((a,b)=>a+b[1],0);
+  const oversized=items.find(it=>it.scu>shipCap);
+  if(oversized) throw new Error(`${oversized.mission} ${oversized.commodity} is a single ${oversized.scu} SCU delivery, which is bigger than your ship's entire ${shipCap} SCU capacity even empty. It can't be split across trips — it needs a bigger ship.`);
+  let remaining=[...items].sort((a,b)=>b.scu-a.scu);
+  const trips=[]; let cur=startLoc, guard=0;
+  while(remaining.length && guard++<1000){
+    let used=0; const batch=[], leftover=[];
+    remaining.forEach(it=>{ if(used+it.scu<=shipCap){ batch.push(it); used+=it.scu; } else leftover.push(it); });
+    let route, res;
+    while(true){
+      route=dedupeConsec(twoOpt(greedyRoute(batch, cur), batch));
+      res=plan(grids, route, batch);
+      if(!res.errors.length || batch.length<=1) break;
+      // peel the largest stack out — it's the likeliest cause of a packing conflict
+      let mi=0; batch.forEach((it,i)=>{ if(it.scu>batch[mi].scu) mi=i; });
+      leftover.push(batch.splice(mi,1)[0]);
+    }
+    trips.push({items:batch.slice(), route, res});
+    cur=route[route.length-1];
+    remaining=leftover.sort((a,b)=>b.scu-a.scu);
+  }
+  return trips;
 }
 
-function renderTrip(grids, route, items, missions, color, heading){
-  const res=plan(grids, route, items);
+// Top-level integrity check across ALL trips: every input stack delivered exactly
+// once, in exactly one trip, with its full SCU, and nothing planned that wasn't asked
+// for. This is the "don't trust the batcher either" guarantee — per-trip plan() only
+// verifies a trip in isolation, so a dropped/duplicated stack would otherwise slip past.
+function reconcile(items, trips){
+  const errs=[]; const seen=new Map();
+  trips.forEach((t,ti)=>t.res.items.forEach(p=>{
+    const e=seen.get(p._uid)||{scu:0,trips:new Set()};
+    e.scu+=p.scu; e.trips.add(ti); seen.set(p._uid,e);
+  }));
+  const inputUids=new Set(items.map(it=>it._uid));
+  items.forEach(it=>{
+    const e=seen.get(it._uid);
+    if(!e){ errs.push(`${it.mission} ${it.commodity} (${it.scu} SCU → ${it.dest}) was never assigned to any trip`); return; }
+    if(e.scu!==it.scu) errs.push(`${it.mission} ${it.commodity}: ${it.scu} SCU in the mission but ${e.scu} SCU planned`);
+    if(e.trips.size>1) errs.push(`${it.mission} ${it.commodity} ended up split across ${e.trips.size} trips — a single delivery stack must ship in one trip`);
+  });
+  seen.forEach((e,uid)=>{ if(!inputUids.has(uid)) errs.push(`Planned cargo with no matching mission input (id ${uid})`); });
+  const inTotal=items.reduce((a,b)=>a+b.scu,0);
+  let planTotal=0; trips.forEach(t=>t.res.items.forEach(p=>planTotal+=p.scu));
+  if(inTotal!==planTotal) errs.push(`Total SCU mismatch: ${inTotal} across missions vs ${planTotal} planned`);
+  return errs;
+}
+
+function renderTrip(grids, route, items, color, heading, res){
   const dt={}; items.forEach(it=>dt[it.dest]=(dt[it.dest]||0)+it.scu);
   const total=items.reduce((a,b)=>a+b.scu,0);
   const shipCap=grids.reduce((a,b)=>a+b[1],0);
@@ -469,23 +507,32 @@ function run(){
     html+=`<div class="panel"><b>Missions</b><div class="flex-badges" style="margin-top:6px">`+
       missions.map(m=>`<span class="badge" style="background:${color[m.code]}">${m.code} — ${m.label}</span>`).join("")+`</div></div>`;
 
+    // tag each input stack so we can reconcile the plan against it later
+    items.forEach((it,i)=>it._uid=i);
+
     if(total<=shipCap){
       const route=document.getElementById("route").value.split(/\n/).map(s=>s.trim()).filter(Boolean).map(normalizeLoc);
       if(!route.length) throw new Error("Add a route order — list the stations in the order you'll visit them, one per line (a location can repeat, e.g. Baijini at the start and end).");
-      const {html:tripHtml}=renderTrip(grids, route, items, missions, color, null);
-      html+=tripHtml;
+      const res=plan(grids, route, items);
+      const recon=reconcile(items, [{items, res}]);
+      if(recon.length) html+=`<div class="err"><b>Integrity check failed (${recon.length}) — do not fly this:</b><br>`+recon.map(e=>"• "+e).join("<br>")+`</div>`;
+      html+=renderTrip(grids, route, items, color, null, res).html;
     } else {
-      // Doesn't fit in one trip — auto-split into the fewest possible round trips and
-      // auto-route each one (the manual Route box is ignored in this mode).
-      const batches=batchItems(items, shipCap);
+      // Doesn't fit in one trip — auto-split into flyable round trips and auto-route each
+      // one (the manual Route box is ignored in this mode).
       const startLoc=normalizeLoc(document.getElementById("start").value.trim()||items[0].pickup);
-      html+=`<div class="ok"><b>${total} SCU across ${items.length} delivery stacks won't fit in one ${shipCap} SCU trip.</b> Auto-split into ${batches.length} round trips (largest stacks first, packed to fill each trip). Manual route order is ignored while in this mode — each trip routes itself.</div>`;
-      let cur=startLoc;
-      batches.forEach((batchItemsList,i)=>{
-        const route=dedupeConsec(twoOpt(greedyRoute(batchItemsList, cur), batchItemsList));
-        const {html:tripHtml}=renderTrip(grids, route, batchItemsList, missions, color, `Trip ${i+1} of ${batches.length} (${batchItemsList.reduce((a,b)=>a+b.scu,0)} SCU)`);
-        html+=tripHtml;
-        cur=route[route.length-1];
+      const trips=buildTrips(items, grids, startLoc);
+      const recon=reconcile(items, trips);
+      const tripErrs=trips.reduce((a,t)=>a+t.res.errors.length,0);
+      if(!recon.length && !tripErrs){
+        html+=`<div class="ok"><b>All checks passed across all ${trips.length} trips.</b> ${items.length} delivery stacks, each shipped in exactly one trip, every SCU accounted for, no grid ever over capacity.</div>`;
+      } else {
+        if(recon.length) html+=`<div class="err"><b>Whole-haul integrity check failed (${recon.length}) — do not fly this:</b><br>`+recon.map(e=>"• "+e).join("<br>")+`</div>`;
+        if(tripErrs) html+=`<div class="err"><b>${tripErrs} problem(s) inside individual trips — do not fly this.</b></div>`;
+      }
+      html+=`<div class="panel"><b>${total} SCU across ${items.length} delivery stacks won't fit in one ${shipCap} SCU trip.</b> Auto-split into ${trips.length} round trips (largest stacks first, packed to fill each trip). The manual Route box is ignored here — each trip routes itself.</div>`;
+      trips.forEach((t,i)=>{
+        html+=renderTrip(grids, t.route, t.items, color, `Trip ${i+1} of ${trips.length} (${t.items.reduce((a,b)=>a+b.scu,0)} SCU)`, t.res).html;
       });
     }
 
