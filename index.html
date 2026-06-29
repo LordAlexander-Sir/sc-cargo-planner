@@ -395,11 +395,42 @@ function normalizeLoc(s){
   if(/orison/.test(x)) return "Orison";
   if(/tressler/.test(x)) return "PortTressler";
   if(/new ?babbage/.test(x)) return "NewBabbage";
-  // ArcCorp Lagrange by code (arc-l3) or a bare L# (defaults to ArcCorp)
-  let m=x.match(/\barc\w*\b.*\bl ?([1-5])\b/) || lag;
-  if(m) return "L"+m[1];
+  // ── Pyro ── named stations & outposts → GEO Pyro nodes (data from the Discord bot's
+  // uex_terminal_distances). Must precede the ArcCorp bare-L# fallback below.
+  if(/checkmate/.test(x)) return "Pyro:MonoxL4";
+  if(/dudley/.test(x)) return "Pyro:PyroVIL4";
+  if(/endgame/.test(x)) return "Pyro:PyroVIL3";
+  if(/gaslight/.test(x)) return "Pyro:PyroVL2";
+  if(/megumi/.test(x)) return "Pyro:PyroVIL5";
+  if(/patch city/.test(x)) return "Pyro:BloomL3";
+  if(/rat s nest|ratsnest/.test(x)) return "Pyro:PyroVL5";
+  if(/rod s fuel|rods fuel/.test(x)) return "Pyro:PyroVL4";
+  if(/starlight/.test(x)) return "Pyro:BloomL1";
+  if(/orbituary/.test(x)) return "Pyro:Bloom";
+  if(/ruin station|\bruin\b/.test(x)) return "Pyro:Terminus";
+  // Pyro outposts & planet-named text → the planet node
+  if(/bueno ravine|prospect depot|shepherd s rest|golden riviera|\bbloom\b/.test(x)) return "Pyro:Bloom";
+  if(/canard view|last landings|scarper|watcher s depot|\bterminus\b/.test(x)) return "Pyro:Terminus";
+  if(/dinger|chawla|fallow field|sacren|pyro ?iv|pyro ?4/.test(x)) return "Pyro:PyroIV";
+  if(/gray gardens|rustville|pyro ?i\b|pyro ?1\b/.test(x)) return "Pyro:PyroI";
+  if(/jackson s swap|slowburn|sunset mesa|\bmonox\b/.test(x)) return "Pyro:Monox";
+  // ArcCorp Lagrange by code (arc-l3) or a bare L# (defaults to ArcCorp).
+  // Guard: never coerce Pyro text (e.g. "Pyro V Lagrange Point 2") to an ArcCorp L#.
+  if(!/\bpyro\b/.test(x)){
+    let m=x.match(/\barc\w*\b.*\bl ?([1-5])\b/) || lag;
+    if(m) return "L"+m[1];
+  }
   return s.trim().replace(/\s+/g," ");
 }
+// Friendly labels for the internal node keys (mainly Pyro, whose keys are cryptic).
+const NODE_LABEL={
+  "Pyro:MonoxL4":"Checkmate","Pyro:PyroVIL4":"Dudley & Daughters","Pyro:PyroVIL3":"Endgame",
+  "Pyro:PyroVL2":"Gaslight","Pyro:PyroVIL5":"Megumi","Pyro:BloomL3":"Patch City",
+  "Pyro:PyroVL5":"Rat's Nest","Pyro:PyroVL4":"Rod's Fuel","Pyro:BloomL1":"Starlight",
+  "Pyro:Bloom":"Orbituary (Bloom)","Pyro:Terminus":"Ruin Station (Terminus)",
+  "Pyro:PyroI":"Pyro I","Pyro:PyroIV":"Pyro IV","Pyro:Monox":"Monox"
+};
+function displayName(k){ return NODE_LABEL[k] || k; }
 function shortCode(loc){
   const n=normalizeLoc(loc);
   if(/^L[1-5]$/.test(n)) return n;
@@ -409,6 +440,7 @@ function shortCode(loc){
   if(n==="Everus") return "EV";
   if(n==="Seraphim") return "SER";
   if(n==="PortTressler") return "PT";
+  if(n.startsWith("Pyro:")){ const k=n.slice(5).replace(/^Pyro/,"").replace(/[^A-Za-z0-9]/g,""); return "Py"+(k||n.slice(5)).slice(0,4).toUpperCase(); }
   return n.replace(/[^A-Za-z0-9]/g,"").slice(0,3).toUpperCase();
 }
 
@@ -645,7 +677,7 @@ function renderTrip(grids, route, items, color, heading, res){
     html+=`<div class="ok"><b>All checks passed.</b> ${items.length} cargo stacks, every one loaded once and delivered to the correct station, no grid ever over capacity.</div>`;
   }
   html+=`<div class="panel"><b>Summary</b> &middot; total cargo ${total} SCU of ${shipCap} ship capacity &middot; route ~${Math.round(routeDistance(route))} Gm<br>`;
-  html+=`<span style="font-size:13px;color:var(--text-dim)">Per destination: `+Object.entries(dt).sort().map(([k,v])=>`${k} ${v}`).join(" · ")+`</span><br>`;
+  html+=`<span style="font-size:13px;color:var(--text-dim)">Per destination: `+Object.entries(dt).sort().map(([k,v])=>`${displayName(k)} ${v}`).join(" · ")+`</span><br>`;
   html+=`<span style="font-size:13px;color:var(--text-dim)">Peak grid load: `+res.names.map(n=>`${n} ${res.peak[n]}/${res.cap[n]}`).join(" · ")+`</span></div>`;
 
   html+=`<h3 style="font-size:14px;margin:10px 0 6px">Route</h3>`;
@@ -654,7 +686,7 @@ function renderTrip(grids, route, items, color, heading, res){
     st.pulls.forEach(it=>{(grpPull[it.grid]=grpPull[it.grid]||[]).push(it);});
     st.loads.forEach(it=>{(grpLoad[it.grid]=grpLoad[it.grid]||[]).push(it);});
     if(!st.pulls.length && !st.loads.length && st.s!==0) return;
-    html+=`<div class="panel"><div class="stop-name">Stop ${st.s+1} — ${st.loc}</div>`;
+    html+=`<div class="panel"><div class="stop-name">Stop ${st.s+1} — ${displayName(st.loc)}</div>`;
     Object.keys(grpPull).sort().forEach(g=>{
       html+=`<div class="action">Pull off <b>${g}</b>:</div><div class="flex-badges">`+merge(grpPull[g]).map(it=>badge(it,color)).join("")+`</div>`;
     });
@@ -667,7 +699,7 @@ function renderTrip(grids, route, items, color, heading, res){
   html+=`<details class="panel"><summary>Delivery ledger (${res.items.length} grid placements${res.items.length!==items.length?`, from ${items.length} mission stacks`:""})</summary>`+
     `<table class="ledger"><tr><th>Mission</th><th>Commodity</th><th>SCU</th><th>Destination</th><th>Grid</th><th>Load</th><th>Pull</th></tr>`+
     res.items.slice().sort((a,b)=>a.pull_stop-b.pull_stop || a.grid.localeCompare(b.grid)).map(it=>
-      `<tr><td>${it.mission}</td><td>${it.commodity}${it._splitLabel||""}</td><td>${it.scu}</td><td>${it.dest}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
+      `<tr><td>${it.mission}</td><td>${it.commodity}${it._splitLabel||""}</td><td>${it.scu}</td><td>${displayName(it.dest)}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
     `</table></details>`;
   return {html, errors:res.errors};
 }
