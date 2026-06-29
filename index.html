@@ -42,13 +42,13 @@
 <div class="panel noprint">
   <div class="row">
     <div>
-      <label>Ship grids (one per line: <code>name = capacity</code>)</label>
-      <textarea id="grids" rows="6">G1 = 64
+      <label>Pick your ship (fills total SCU — you still define your own grids/zones below)</label>
+      <select id="ship-select" onchange="onShipPick()"><option value="">— custom / not listed —</option></select>
+      <label style="margin-top:10px">Ship grids or zones (one per line: <code>name = capacity</code>). Single-grid ship? Split it into as many zones as you want to keep cargo separated.</label>
+      <textarea id="grids" rows="6" oninput="checkGridSum()" placeholder="G1 = 64
 G2 = 128
-G3 = 128
-G4 = 64
-G5 = 128
-G6 = 128</textarea>
+G3 = 128"></textarea>
+      <div id="grid-sum-check" style="font-size:13px;margin-top:4px;color:var(--muted)"></div>
     </div>
     <div>
       <label>Current location (route starts here)</label>
@@ -435,6 +435,38 @@ function merge(arr){
   return Object.values(map);
 }
 
+// Ship cargo capacities (SCU) — from the SC Discord bot's ship data (stock_loadouts.json),
+// sourced from erkul.games loadouts. Sorted alphabetically. Total only — per-ship grid
+// layouts aren't tracked anywhere, so the player defines their own grids/zones below.
+const SHIPS=[["Aegis Avenger Titan",8],["Aegis Avenger Titan Renegade",8],["Aegis Idris M",1326],["Aegis Idris P",1374],["Aegis Reclaimer",420],["Aegis Redeemer",2],["Anvil Asgard",180],["Anvil C8 Pisces",4],["Anvil C8X Pisces Expedition",4],["Anvil Carrack",456],["Anvil Carrack Expedition",456],["Anvil Paladin",4],["Anvil Valkyrie",90],["ARGO CSV-SM",4],["ARGO MOLE",96],["ARGO MPUV Cargo",2],["ARGO MPUV Tractor",16],["ARGO RAFT",192],["ARGO SRV",12],["C.O. Mustang Alpha",4],["C.O. Nomad",24],["Crusader A2 Hercules Starlifter",216],["Crusader C1 Spirit",64],["Crusader C2 Hercules Starlifter",696],["Crusader M2 Hercules Starlifter",522],["Crusader Mercury Star Runner",114],["Drake Caterpillar",576],["Drake Caterpillar Pirate",576],["Drake Clipper",12],["Drake Corsair",72],["Drake Cutlass Black",46],["Drake Cutlass Blue",12],["Drake Cutlass Red",12],["Drake Cutter",4],["Drake Cutter Rambler",2],["Drake Cutter Scout",2],["Drake Golem",32],["Drake Golem OX",64],["Drake Ironclad",2200],["Drake Ironclad Assault",1440],["Drake Mule",1],["Drake Vulture",12],["Gatac Railen",640],["Gatac Tyilui",96],["Greycat UTV",1],["MISC Fortune",16],["MISC Freelancer",66],["MISC Freelancer DUR",36],["MISC Freelancer MAX",120],["MISC Freelancer MIS",36],["MISC Hull A",64],["MISC Hull B",512],["MISC Hull C",4608],["MISC Prospector",32],["MISC Reliant Kore",6],["MISC Reliant Tana",1],["MISC Starfarer",291],["MISC Starfarer Gemini",291],["MISC Starlancer MAX",224],["MISC Starlancer TAC",96],["Origin 100i",2],["Origin 125a",2],["Origin 135c",6],["Origin 300i",8],["Origin 315p",12],["Origin 325a",4],["Origin 350r",4],["Origin 400i",42],["Origin 600i",44],["Origin 600i Executive Edition",44],["Origin 600i Touring",20],["Origin 890 Jump",388],["Origin X1",2],["Prowler Utility",32],["RSI Apollo Medivac",32],["RSI Apollo Triage",32],["RSI Aurora Mk I  LX",3],["RSI Aurora Mk I CL",6],["RSI Aurora Mk I ES",3],["RSI Aurora Mk I LN",3],["RSI Aurora Mk I MR",3],["RSI Aurora Mk I SE",3],["RSI Aurora Mk II",2],["RSI Constellation Andromeda",96],["RSI Constellation Aquila",96],["RSI Constellation Phoenix",96],["RSI Constellation Phoenix Emerald",96],["RSI Constellation Taurus",174],["RSI Hermes",288],["RSI Perseus",96],["RSI Polaris",576],["RSI Zeus Mk II CL",128],["RSI Zeus Mk II ES",32],["Shiv",32]];
+
+function initShipPicker(){
+  const sel=document.getElementById("ship-select");
+  SHIPS.forEach(([name,scu])=>{
+    const o=document.createElement("option");
+    o.value=scu; o.textContent=`${name} — ${scu} SCU`;
+    sel.appendChild(o);
+  });
+}
+function onShipPick(){
+  const sel=document.getElementById("ship-select");
+  const scu=+sel.value;
+  if(!scu) return;
+  const ta=document.getElementById("grids");
+  if(!ta.value.trim()) ta.value=`G1 = ${scu}`;
+  checkGridSum();
+}
+function checkGridSum(){
+  const sel=document.getElementById("ship-select");
+  const box=document.getElementById("grid-sum-check");
+  let sum=0;
+  try{ sum=parseGrids(document.getElementById("grids").value).reduce((a,g)=>a+g[1],0); }catch(e){}
+  if(!sel.value){ box.textContent = sum?`Grids total: ${sum} SCU`:""; box.style.color="var(--muted)"; return; }
+  const target=+sel.value;
+  if(sum===target){ box.textContent=`✓ Grids total ${sum} SCU — matches ship capacity`; box.style.color="#27500a"; }
+  else { box.textContent=`Grids total ${sum} SCU — ship capacity is ${target} SCU (${sum<target?"add":"remove"} ${Math.abs(target-sum)} SCU)`; box.style.color="#854F0B"; }
+}
+
 // ---- Station / commodity lists for the builder dropdowns ----
 const STATIONS=["Baijini Point","ARC-L1 Wide Forest","ARC-L2 Lively Pathway","ARC-L3 Modern Express",
   "ARC-L4 Faint Glen","ARC-L5 Yellow Core","Everus Harbor","Seraphim Station","CRU-L1 Ambitious Dream",
@@ -512,6 +544,8 @@ function initBuilder(){
 
 window.addEventListener("DOMContentLoaded",()=>{
   initBuilder();
+  initShipPicker();
+  checkGridSum();
   if(document.getElementById("missions").value.trim()) run();
   else document.getElementById("out").innerHTML='<div class="panel" style="color:var(--muted)">Add your missions above (paste, build by hand, or have an AI transcribe screenshots), then press <b>Build plan</b>.</div>';
 });
