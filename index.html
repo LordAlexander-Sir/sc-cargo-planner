@@ -523,11 +523,12 @@ function plan(grids, route, items){
     while(remaining>0){
       const cands=names.filter(g=>room(g,it)>0);
       if(!cands.length) throw new Error(`No combination of grids can hold ${it.mission} ${it.commodity} (${it.scu} SCU) at the same time as everything else aboard between stop ${it.load_stop+1} and stop ${it.pull_stop+1} — short by ${remaining} SCU even after splitting across every grid with room. Try a route that delivers something earlier to free up space, or a bigger ship.`);
-      // fill the smallest sufficient gap first, so big empty grids stay available for
-      // whatever else still needs to be placed; break ties by least destination-mixing.
+      // fill the LARGEST gap first: greedily taking the biggest grids uses the fewest
+      // pieces possible, so a split stack lands in as few grids as it can rather than
+      // being scattered into many small awkward piles. Ties break by least dest-mixing.
       const score=g=>{
         const mine=ivl(it).some(s=>destsOn[g][s].has(it.dest));
-        return [room(g,it), mixCost(g,it), mine?0:1, names.indexOf(g)];
+        return [-room(g,it), mixCost(g,it), mine?0:1, names.indexOf(g)];
       };
       cands.sort((a,b)=>{const sa=score(a),sb=score(b);for(let i=0;i<sa.length;i++){if(sa[i]!==sb[i])return sa[i]-sb[i];}return 0;});
       const g=cands[0];
@@ -557,11 +558,21 @@ function plan(grids, route, items){
   return {cap, names, peak, errors, stops, items:workItems};
 }
 
-function balanceCheck(missions){
-  // per mission+commodity, sum of pickup SCU == sum delivered (here every deliver is a stack, so just report totals)
-  // (kept simple: the format ties each delivered box to its own pickup, so balance holds by construction;
-  //  this hook is where contract-vs-input mismatches would be flagged.)
-  return [];
+// Sanity-check the PARSED missions before planning: a location that didn't resolve to a
+// known station (normalizeLoc returned a raw string not in GEO) gets distance 999 and
+// routes badly, and usually means a typo or an as-yet-unaliased station name. Non-fatal —
+// we warn rather than block, since the plan's hard checks still hold for known stations.
+function checkParsing(items){
+  const warns=[], seen=new Set();
+  items.forEach(it=>{
+    [["pickup",it.pickup],["destination",it.dest]].forEach(([role,loc])=>{
+      if(!GEO[loc]){
+        const key=role+"|"+loc;
+        if(!seen.has(key)){ seen.add(key); warns.push(`Unrecognized ${role} "${loc}" (${it.mission} ${it.commodity}) — distances and routing for it are guesses. Check the spelling, or it may be a station not yet known to the planner.`); }
+      }
+    });
+  });
+  return warns;
 }
 
 function colorFor(missions){ const map={}; missions.forEach((m,i)=>map[m.code]=PALETTE[i%PALETTE.length]); return map; }
@@ -671,6 +682,9 @@ function run(){
     const total=items.reduce((a,b)=>a+b.scu,0);
 
     let html="";
+    // parse sanity check — flag stations that didn't resolve (typos / unknown names)
+    const warns=checkParsing(items);
+    if(warns.length) html+=`<div class="panel" style="background:var(--gold-dim);border-color:var(--gold);color:var(--gold)"><b>Heads up (${warns.length}):</b><br>`+warns.map(w=>"• "+w).join("<br>")+`</div>`;
     // legend (shared across trips)
     html+=`<div class="panel"><b>Missions</b><div class="flex-badges" style="margin-top:6px">`+
       missions.map(m=>`<span class="badge" style="background:${color[m.code]}">${m.code} — ${m.label}</span>`).join("")+`</div></div>`;
