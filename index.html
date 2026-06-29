@@ -166,7 +166,22 @@ button:active { transform:scale(.98); }
 details summary { cursor:pointer; font-weight:700; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); }
 details summary:hover { color:var(--cyan); }
 
-@media print { .noprint { display:none; } body { padding:0; background:#fff; } header { display:none; } }
+/* ── HELP ICONS (click to open) ── */
+.help-wrap { position:relative; display:inline-block; }
+.help-i { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%;
+  border:1px solid var(--border2); color:var(--text-dim); font-size:10px; font-weight:700; cursor:pointer;
+  margin-left:6px; vertical-align:middle; line-height:1; user-select:none; font-family:'Segoe UI',system-ui,sans-serif; }
+.help-i:hover { border-color:var(--cyan); color:var(--cyan); box-shadow:var(--cyan-glow); }
+.help-pop { display:none; position:absolute; z-index:50; top:24px; left:0; width:320px; max-width:82vw;
+  background:var(--surface); border:1px solid var(--border2); border-radius:6px; padding:12px 14px;
+  box-shadow:var(--shadow-md); font-size:12px; font-weight:400; line-height:1.65; color:var(--text);
+  letter-spacing:normal; text-transform:none; }
+.help-wrap.open .help-pop { display:block; }
+.help-pop b { color:var(--text-bright); }
+.help-pop::before { content:''; position:absolute; top:-6px; left:5px; width:10px; height:10px; background:var(--surface);
+  border-left:1px solid var(--border2); border-top:1px solid var(--border2); transform:rotate(45deg); }
+
+@media print { .noprint { display:none; } body { padding:0; background:#fff; } header { display:none; } .help-i { display:none; } }
 </style>
 </head>
 <body>
@@ -196,7 +211,7 @@ details summary:hover { color:var(--cyan); }
     <div>
       <label>Pick your ship (fills total SCU)</label>
       <select id="ship-select" onchange="onShipPick()"><option value="">— custom / not listed —</option></select>
-      <label style="margin-top:10px">How many cargo grids / zones?</label>
+      <label style="margin-top:10px">How many cargo grids / zones?<span class="help-wrap"><span class="help-i" onclick="toggleHelp(this,event)">?</span><span class="help-pop"><b>Grids &amp; zones</b><br>A cargo grid is a physical cargo area on your ship. Some ships have several <b>separate grids</b> — the <b>Gatac Railen</b>, for example, carries several pods — so cargo for different stations can be kept physically apart.<br><br>Other ships, like the <b>Drake Ironclad</b>, are one big grid. List it as a single grid, or split that capacity into as many <b>zones</b> as you want (front/back, left/right…).<br><br>The planner gives each grid/zone to one destination at a time and never mixes two destinations in the same space — so at every stop you know exactly which boxes to pull and where to put what you load.</span></span></label>
       <input type="number" id="grid-count" min="1" max="50" oninput="rebuildGridRows()" placeholder="e.g. 6">
       <p style="font-size:12px;color:var(--text-dim);margin-top:4px;line-height:1.6">Set how many separate grids (or zones you want to keep cargo apart in). We split the ship's capacity evenly — tweak any grid that's a different size.</p>
       <div id="grid-rows" style="margin-top:6px"></div>
@@ -817,6 +832,15 @@ function addGridRow(name,cap,locked){
   capEl.addEventListener("input",()=>{ row.dataset.locked = capEl.value.trim()?"1":""; redistribute(); });
 }
 function bumpGridCount(){ document.getElementById("grid-count").value=document.querySelectorAll("#grid-rows .grow").length||""; }
+
+// Click-to-open help popovers (one open at a time; click anywhere else closes them).
+function toggleHelp(el,ev){
+  ev.stopPropagation();
+  const wrap=el.closest(".help-wrap");
+  document.querySelectorAll(".help-wrap.open").forEach(w=>{ if(w!==wrap) w.classList.remove("open"); });
+  wrap.classList.toggle("open");
+}
+document.addEventListener("click",e=>{ if(!e.target.closest(".help-wrap")) document.querySelectorAll(".help-wrap.open").forEach(w=>w.classList.remove("open")); });
 
 // Keep the grids summing to ship capacity: pinned (manually-set) grids hold their value,
 // and the rest split whatever SCU is left over, as evenly as possible.
