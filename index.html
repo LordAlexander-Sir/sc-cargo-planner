@@ -322,6 +322,22 @@ function plan(grids, route, items){
     for(let s=it.load_stop+1;s<L;s++){ if(route[s]===it.dest){ it.pull_stop=s; break; } }
     if(it.pull_stop===null) throw new Error(`Route never visits destination "${it.dest}" after pickup for ${it.mission} ${it.commodity}`);
   }
+  // A single delivery stack bigger than any one grid must span multiple grids at once
+  // (physically unavoidable — boxes have to go somewhere). Split it into chunks no
+  // bigger than the largest available grid; everything else stays a single piece.
+  const maxGridCap=Math.max(...names.map(n=>cap[n]));
+  const workItems=[];
+  items.forEach(it=>{
+    if(it.scu<=maxGridCap){ workItems.push(Object.assign({},it,{grid:null})); return; }
+    let remaining=it.scu, part=1;
+    const totalParts=Math.ceil(it.scu/maxGridCap);
+    while(remaining>0){
+      const chunk=Math.min(remaining,maxGridCap);
+      workItems.push(Object.assign({},it,{scu:chunk,grid:null,_splitLabel:totalParts>1?` (part ${part}/${totalParts})`:""}));
+      remaining-=chunk; part++;
+    }
+  });
+
   // timeline assignment (capacity hard, one-dest-per-grid preferred)
   const timeline={}, destsOn={};
   names.forEach(n=>{ timeline[n]=new Array(L).fill(0); destsOn[n]=Array.from({length:L},()=>new Set()); });
@@ -329,10 +345,10 @@ function plan(grids, route, items){
   const fits=(g,it)=>ivl(it).every(s=>timeline[g][s]+it.scu<=cap[g]);
   const mixCost=(g,it)=>{const o=new Set();ivl(it).forEach(s=>destsOn[g][s].forEach(d=>{if(d!==it.dest)o.add(d);}));return o.size;};
   const commit=(g,it)=>{it.grid=g;ivl(it).forEach(s=>{timeline[g][s]+=it.scu;destsOn[g][s].add(it.dest);});};
-  const order=[...items].sort((a,b)=> b.scu-a.scu || a.load_stop-b.load_stop);
+  const order=[...workItems].sort((a,b)=> b.scu-a.scu || a.load_stop-b.load_stop);
   for(const it of order){
     const cands=names.filter(g=>fits(g,it));
-    if(!cands.length) throw new Error(`No grid can hold ${it.mission} ${it.commodity} ${it.scu} SCU at the same time as everything else aboard. Try freeing space (deliver earlier) or a bigger ship.`);
+    if(!cands.length) throw new Error(`No combination of grids can hold ${it.mission} ${it.commodity}${it._splitLabel||""} (${it.scu} SCU) at the same time as everything else aboard between stop ${it.load_stop+1} and stop ${it.pull_stop+1}. Try a route that delivers something earlier to free up space, or a bigger ship.`);
     const score=g=>{
       const mine=ivl(it).some(s=>destsOn[g][s].has(it.dest));
       return [mixCost(g,it), mine?0:1, cap[g], names.indexOf(g)];
@@ -344,17 +360,17 @@ function plan(grids, route, items){
   const gridItems={}; names.forEach(n=>gridItems[n]=new Set());
   const peak={}; names.forEach(n=>peak[n]=0);
   const errors=[];
-  const gload=g=>[...gridItems[g]].reduce((a,id)=>a+items[id].scu,0);
-  items.forEach((it,i)=>it._id=i);
+  const gload=g=>[...gridItems[g]].reduce((a,id)=>a+workItems[id].scu,0);
+  workItems.forEach((it,i)=>it._id=i);
   const stops=[];
   for(let s=0;s<L;s++){
-    const pulls=items.filter(it=>it.pull_stop===s);
-    const loads=items.filter(it=>it.load_stop===s);
+    const pulls=workItems.filter(it=>it.pull_stop===s);
+    const loads=workItems.filter(it=>it.load_stop===s);
     pulls.forEach(it=>{ if(!gridItems[it.grid].has(it._id)) errors.push(`Stop ${s+1} ${route[s]}: ${it.mission} ${it.commodity} not on ${it.grid} when pulled`); gridItems[it.grid].delete(it._id); });
     loads.forEach(it=>{ gridItems[it.grid].add(it._id); const gl=gload(it.grid); if(gl>cap[it.grid]) errors.push(`Stop ${s+1} ${route[s]}: ${it.grid} OVERFLOW ${gl}/${cap[it.grid]}`); peak[it.grid]=Math.max(peak[it.grid],gl); });
     stops.push({s, loc:route[s], pulls, loads});
   }
-  return {cap, names, peak, errors, stops};
+  return {cap, names, peak, errors, stops, items:workItems};
 }
 
 function balanceCheck(missions){
@@ -366,7 +382,7 @@ function balanceCheck(missions){
 
 function colorFor(missions){ const map={}; missions.forEach((m,i)=>map[m.code]=PALETTE[i%PALETTE.length]); return map; }
 
-function badge(it,color){ return `<span class="badge" style="background:${color[it.mission]}">${it.mission}: ${it.commodity} ${it.scu}</span>`; }
+function badge(it,color){ return `<span class="badge" style="background:${color[it.mission]}">${it.mission}: ${it.commodity} ${it.scu}${it._splitLabel||""}</span>`; }
 
 function run(){
   const out=document.getElementById("out");
@@ -376,6 +392,13 @@ function run(){
     if(!route.length) throw new Error("Add a route order — list the stations in the order you'll visit them, one per line (a location can repeat, e.g. Baijini at the start and end).");
     const {items, missions}=parseMissions(document.getElementById("missions").value);
     const inputLines=items.length;
+    const shipCapEarly=grids.reduce((a,b)=>a+b[1],0);
+    const totalEarly=items.reduce((a,b)=>a+b.scu,0);
+    if(totalEarly>shipCapEarly){
+      const byPickup={}; items.forEach(it=>{byPickup[it.pickup]=(byPickup[it.pickup]||0)+it.scu;});
+      const worst=Object.entries(byPickup).sort((a,b)=>b[1]-a[1])[0];
+      throw new Error(`These missions total ${totalEarly} SCU, which is more than your ship's ${shipCapEarly} SCU capacity — by itself, ${worst[0]} alone has ${worst[1]} SCU waiting to be picked up. This can't be done in a single continuous run no matter how the grids or route are arranged; it needs ${Math.ceil(totalEarly/shipCapEarly)}+ separate trips. Split the missions into smaller batches (one batch per trip, each under ${shipCapEarly} SCU) and build a plan for each batch separately.`);
+    }
     const res=plan(grids, route, items);
     const color=colorFor(missions);
     // destination totals
@@ -416,10 +439,10 @@ function run(){
     });
 
     // ledger
-    html+=`<details class="panel"><summary>Delivery ledger (${items.length} stacks)</summary>`+
+    html+=`<details class="panel"><summary>Delivery ledger (${res.items.length} grid placements${res.items.length!==items.length?`, from ${items.length} mission stacks`:""})</summary>`+
       `<table class="ledger"><tr><th>Mission</th><th>Commodity</th><th>SCU</th><th>Destination</th><th>Grid</th><th>Load</th><th>Pull</th></tr>`+
-      items.slice().sort((a,b)=>a.pull_stop-b.pull_stop || a.grid.localeCompare(b.grid)).map(it=>
-        `<tr><td>${it.mission}</td><td>${it.commodity}</td><td>${it.scu}</td><td>${it.dest}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
+      res.items.slice().sort((a,b)=>a.pull_stop-b.pull_stop || a.grid.localeCompare(b.grid)).map(it=>
+        `<tr><td>${it.mission}</td><td>${it.commodity}${it._splitLabel||""}</td><td>${it.scu}</td><td>${it.dest}</td><td>${it.grid}</td><td>Stop ${it.load_stop+1}</td><td>Stop ${it.pull_stop+1}</td></tr>`).join("")+
       `</table></details>`;
 
     out.innerHTML=html;
