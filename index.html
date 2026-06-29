@@ -322,39 +322,55 @@ function plan(grids, route, items){
     for(let s=it.load_stop+1;s<L;s++){ if(route[s]===it.dest){ it.pull_stop=s; break; } }
     if(it.pull_stop===null) throw new Error(`Route never visits destination "${it.dest}" after pickup for ${it.mission} ${it.commodity}`);
   }
-  // A single delivery stack bigger than any one grid must span multiple grids at once
-  // (physically unavoidable — boxes have to go somewhere). Split it into chunks no
-  // bigger than the largest available grid; everything else stays a single piece.
-  const maxGridCap=Math.max(...names.map(n=>cap[n]));
-  const workItems=[];
-  items.forEach(it=>{
-    if(it.scu<=maxGridCap){ workItems.push(Object.assign({},it,{grid:null})); return; }
-    let remaining=it.scu, part=1;
-    const totalParts=Math.ceil(it.scu/maxGridCap);
-    while(remaining>0){
-      const chunk=Math.min(remaining,maxGridCap);
-      workItems.push(Object.assign({},it,{scu:chunk,grid:null,_splitLabel:totalParts>1?` (part ${part}/${totalParts})`:""}));
-      remaining-=chunk; part++;
-    }
-  });
-
   // timeline assignment (capacity hard, one-dest-per-grid preferred)
+  const workItems=[];
   const timeline={}, destsOn={};
   names.forEach(n=>{ timeline[n]=new Array(L).fill(0); destsOn[n]=Array.from({length:L},()=>new Set()); });
   const ivl=it=>{const a=[];for(let s=it.load_stop;s<it.pull_stop;s++)a.push(s);return a;};
   const fits=(g,it)=>ivl(it).every(s=>timeline[g][s]+it.scu<=cap[g]);
+  const room=(g,it)=>Math.min(...ivl(it).map(s=>cap[g]-timeline[g][s]));
   const mixCost=(g,it)=>{const o=new Set();ivl(it).forEach(s=>destsOn[g][s].forEach(d=>{if(d!==it.dest)o.add(d);}));return o.size;};
   const commit=(g,it)=>{it.grid=g;ivl(it).forEach(s=>{timeline[g][s]+=it.scu;destsOn[g][s].add(it.dest);});};
-  const order=[...workItems].sort((a,b)=> b.scu-a.scu || a.load_stop-b.load_stop);
+
+  // Pass 1: place each stack whole wherever it fits in one grid (largest stacks first).
+  // Pass 2: anything that didn't fit whole gets divided across the leftover gaps left by
+  // pass 1 — physically unavoidable for a stack bigger than any single grid, and also the
+  // only way to resolve packing conflicts where the pieces would fit but not as one block.
+  const order=[...items].sort((a,b)=> b.scu-a.scu || a.load_stop-b.load_stop);
+  const needsSplit=[];
   for(const it of order){
     const cands=names.filter(g=>fits(g,it));
-    if(!cands.length) throw new Error(`No combination of grids can hold ${it.mission} ${it.commodity}${it._splitLabel||""} (${it.scu} SCU) at the same time as everything else aboard between stop ${it.load_stop+1} and stop ${it.pull_stop+1}. Try a route that delivers something earlier to free up space, or a bigger ship.`);
+    if(!cands.length){ needsSplit.push(it); continue; }
     const score=g=>{
       const mine=ivl(it).some(s=>destsOn[g][s].has(it.dest));
       return [mixCost(g,it), mine?0:1, cap[g], names.indexOf(g)];
     };
     cands.sort((a,b)=>{const sa=score(a),sb=score(b);for(let i=0;i<sa.length;i++){if(sa[i]!==sb[i])return sa[i]-sb[i];}return 0;});
     commit(cands[0],it);
+    workItems.push(Object.assign({},it,{grid:cands[0]}));
+  }
+  for(const it of needsSplit){
+    let remaining=it.scu;
+    const parts=[];
+    while(remaining>0){
+      const cands=names.filter(g=>room(g,it)>0);
+      if(!cands.length) throw new Error(`No combination of grids can hold ${it.mission} ${it.commodity} (${it.scu} SCU) at the same time as everything else aboard between stop ${it.load_stop+1} and stop ${it.pull_stop+1} — short by ${remaining} SCU even after splitting across every grid with room. Try a route that delivers something earlier to free up space, or a bigger ship.`);
+      // fill the smallest sufficient gap first, so big empty grids stay available for
+      // whatever else still needs to be placed; break ties by least destination-mixing.
+      const score=g=>{
+        const mine=ivl(it).some(s=>destsOn[g][s].has(it.dest));
+        return [room(g,it), mixCost(g,it), mine?0:1, names.indexOf(g)];
+      };
+      cands.sort((a,b)=>{const sa=score(a),sb=score(b);for(let i=0;i<sa.length;i++){if(sa[i]!==sb[i])return sa[i]-sb[i];}return 0;});
+      const g=cands[0];
+      const chunk=Math.min(remaining,room(g,it));
+      const chunkItem=Object.assign({},it,{scu:chunk,grid:g});
+      commit(g,chunkItem);
+      parts.push(chunkItem);
+      remaining-=chunk;
+    }
+    if(parts.length>1) parts.forEach((p,i)=>{p._splitLabel=` (part ${i+1}/${parts.length})`;});
+    workItems.push(...parts);
   }
   // simulate + verify
   const gridItems={}; names.forEach(n=>gridItems[n]=new Set());
