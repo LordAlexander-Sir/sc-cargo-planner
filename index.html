@@ -308,10 +308,26 @@ const GEO={"Baijini":{"s":"St","c":[91.7,24.2,-1.3]},"Area18":{"s":"St","c":[91.
 const GATE={"StPy":[78.8,34.0,-1.6],"PySt":[103.0,0.0,0.0]};
 const JUMP=150; // approximate cost (Gm-equivalent) of a Stanton<->Pyro jump
 function eu(a,b){ return Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]); }
+// Approximate coordinates for outposts/stations not in GEO, by their parent body. This
+// keeps distance/routing sane (and silences the "unrecognized" warning) WITHOUT merging
+// distinct delivery points — each station keeps its own key so per-station verification and
+// box-by-box delivery stay correct; only the coordinates fall back to the body.
+const BODY_HINTS=[
+  [/\bdaymar\b|\bcellin\b|\byela\b|crusader|\bscd\b/, "Seraphim"],                          // Crusader & its moons
+  [/\bcalliope\b|\bclio\b|\beuterpe\b|microtech|babbage|\bsm0\b|\bsmca\b/, "PortTressler"], // microTech & its moons
+  [/\baberdeen\b|\barial\b|\bita\b|\bmagda\b|hurston|lorville|riker/, "Everus"],            // Hurston & its moons
+  [/\bwala\b|\blyria\b|arccorp|shubin|samson|mining area/, "Baijini"]                       // ArcCorp & its moons (default for these families)
+];
+function bodyOf(name){
+  const x=" "+name.toLowerCase().replace(/[^a-z0-9]+/g," ")+" ";
+  for(const [re,hub] of BODY_HINTS){ if(re.test(x)) return GEO[hub]; }
+  return null;
+}
+function coordOf(k){ return GEO[k] || bodyOf(k); }
 function dist(a,b){
   if(a===b) return 0;
-  const A=GEO[a],B=GEO[b];
-  if(!A||!B) return 999;                 // unknown station: treat as far
+  const A=coordOf(a),B=coordOf(b);
+  if(!A||!B) return 999;                 // truly unknown station: treat as far
   if(A.s===B.s) return eu(A.c,B.c);
   if(A.s==="St"&&B.s==="Py") return eu(A.c,GATE.StPy)+JUMP+eu(GATE.PySt,B.c);
   if(A.s==="Py"&&B.s==="St") return eu(A.c,GATE.PySt)+JUMP+eu(GATE.StPy,B.c);
@@ -412,7 +428,7 @@ function normalizeLoc(s){
   if(/baijini/.test(x)) return "Baijini";
   if(/area ?18/.test(x)) return "Area18";
   if(/everus/.test(x)) return "Everus";
-  if(/lorville/.test(x)) return "Lorville";
+  if(/lorville|riker/.test(x)) return "Lorville";  // Riker Memorial Spaceport = Lorville
   if(/seraphim/.test(x)) return "Seraphim";
   if(/orison/.test(x)) return "Orison";
   if(/tressler/.test(x)) return "PortTressler";
@@ -620,7 +636,7 @@ function checkParsing(items){
   const warns=[], seen=new Set();
   items.forEach(it=>{
     [["pickup",it.pickup],["destination",it.dest]].forEach(([role,loc])=>{
-      if(!GEO[loc]){
+      if(!coordOf(loc)){
         const key=role+"|"+loc;
         if(!seen.has(key)){ seen.add(key); warns.push(`Unrecognized ${role} "${loc}" (${it.mission} ${it.commodity}) — distances and routing for it are guesses. Check the spelling, or it may be a station not yet known to the planner.`); }
       }
