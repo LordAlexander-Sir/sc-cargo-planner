@@ -259,6 +259,7 @@ Baijini"></textarea>
     <div class="row" style="margin-top:8px">
       <div><label>Mission label (optional)</label><input type="text" id="b-label" placeholder="e.g. L2 medium haul"></div>
       <div><label>Pickup station</label><input type="text" id="b-pickup" list="stations" placeholder="pick or type"></div>
+      <div><label>Reward aUEC (optional)</label><input type="number" id="b-reward" min="0" placeholder="e.g. 45000"></div>
     </div>
     <label style="margin-top:8px">Deliveries</label>
     <div id="b-deliveries"></div>
@@ -268,14 +269,16 @@ Baijini"></textarea>
     </div>
   </details>
 
-  <label style="margin-top:10px">Missions — one block per mission. <code>Pickup: LOC</code> then <code>Deliver SCU COMMODITY to DEST</code>. For multi-pickup boxes add <code>from LOC</code> on the deliver line.</label>
+  <label style="margin-top:10px">Missions — one block per mission. <code>Pickup: LOC</code> then <code>Deliver SCU COMMODITY to DEST</code>. Optional <code>Reward: 45000</code> tracks payout. For multi-pickup boxes add <code>from LOC</code> on the deliver line.</label>
   <textarea id="missions" rows="14" placeholder="# Mission label
 Pickup: Baijini Point
+Reward: 45,000
 Deliver 7 Pressurized Ice to Modern Express Station (ARC-L3)
 Deliver 5 Processed Food to Wide Forest Station (ARC-L1)
 
 # Next mission
 Pickup: ARC-L2 Lively Pathway Station
+Reward: 62000
 Deliver 17 Aluminum to Everus Harbor
 Deliver 19 Aluminum to Seraphim Station"></textarea>
   <div style="margin-top:10px">
@@ -285,6 +288,14 @@ Deliver 19 Aluminum to Seraphim Station"></textarea>
 </div>
 
 <div id="out"></div>
+
+<div class="panel noprint" id="earnings-panel" style="margin-top:16px">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+    <div><b>Earnings log</b><span class="help-wrap"><span class="help-i" onclick="toggleHelp(this,event)">?</span><span class="help-pop"><b>Track what you earn</b><br>Add <code>Reward: 45000</code> to a mission and its payout shows in the plan. Press <b>Add to earnings log</b> on any plan to bank that haul's total here — a running lifetime tally, saved in your browser only. Use Reset to start over.</span></span></div>
+    <button onclick="resetEarnings()" style="font-size:10px">Reset</button>
+  </div>
+  <div id="earnings-body" style="margin-top:8px"></div>
+</div>
 </div><!-- /.wrap -->
 
 <script>
@@ -500,6 +511,15 @@ function parseMissions(t){
       if(!commodityHint) cur.defaultPickup=normalizeLoc(firstStation);
       return;
     }
+    // a Reward/Pay line: capture the contract payout (aUEC), accepting commas and k/m suffixes
+    m=l.match(/^(?:Reward|Pay(?:out|ment)?|Earnings?)\s*[:\-]?\s*([\d,.]+)\s*([km])?\b/i);
+    if(m){
+      if(!cur) cur={label:"Mission", items:[], pickups:[]};
+      let n=parseFloat(m[1].replace(/,/g,""));
+      if(/k/i.test(m[2]||"")) n*=1e3; else if(/m/i.test(m[2]||"")) n*=1e6;
+      cur.reward=(cur.reward||0)+Math.round(n);
+      return;
+    }
     // a Deliver line
     m=l.match(/^Deliver\s+(\d+)\s*(?:SCU\s+)?(.+?)\s+to\s+(.+?)(?:\s+from\s+(.+))?$/i);
     if(m){
@@ -646,6 +666,37 @@ function checkParsing(items){
 }
 
 function colorFor(missions){ const map={}; missions.forEach((m,i)=>map[m.code]=PALETTE[i%PALETTE.length]); return map; }
+function aUEC(n){ return Math.round(n).toLocaleString("en-US")+" aUEC"; }
+
+// ── Earnings log (persisted in the browser only) ──
+function getEarnings(){ try{ return JSON.parse(localStorage.getItem("sc-earnings")||"[]"); }catch(e){ return []; } }
+function logEarnings(amt){
+  amt=Math.round(+amt||0); if(!amt) return;
+  const log=getEarnings(); log.push({t:Date.now(), amt});
+  localStorage.setItem("sc-earnings", JSON.stringify(log));
+  renderEarnings(true);
+}
+function resetEarnings(){
+  if(!getEarnings().length || confirm("Clear your entire earnings log? This can't be undone.")){
+    localStorage.removeItem("sc-earnings"); renderEarnings();
+  }
+}
+function renderEarnings(flash){
+  const box=document.getElementById("earnings-body"); if(!box) return;
+  const log=getEarnings();
+  if(!log.length){ box.innerHTML=`<span style="font-size:12px;color:var(--text-dim)">No hauls logged yet. Build a plan with rewards, then press <b>Add to earnings log</b>.</span>`; return; }
+  const total=log.reduce((a,e)=>a+e.amt,0);
+  const recent=log.slice(-8).reverse().map(e=>{
+    const d=new Date(e.t); const ds=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    return `<tr><td>${ds}</td><td style="text-align:right">${aUEC(e.amt)}</td></tr>`;
+  }).join("");
+  box.innerHTML=
+    `<div style="font-size:22px;font-weight:800;color:var(--green)">${aUEC(total)}</div>`+
+    `<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">lifetime, across ${log.length} haul${log.length!==1?"s":""}</div>`+
+    `<table class="ledger" style="max-width:320px"><tr><th>When</th><th style="text-align:right">Payout</th></tr>${recent}</table>`+
+    (log.length>8?`<div style="font-size:11px;color:var(--text-dim);margin-top:4px">…showing last 8 of ${log.length}</div>`:"");
+  if(flash){ box.animate?box.animate([{opacity:.4},{opacity:1}],{duration:400}):0; }
+}
 
 function badge(it,color){ return `<span class="badge" style="background:${color[it.mission]}">${it.mission}: ${it.commodity} ${it.scu}${it._splitLabel||""}</span>`; }
 
@@ -755,9 +806,20 @@ function run(){
     // parse sanity check — flag stations that didn't resolve (typos / unknown names)
     const warns=checkParsing(items);
     if(warns.length) html+=`<div class="panel" style="background:var(--gold-dim);border-color:var(--gold);color:var(--gold)"><b>Heads up (${warns.length}):</b><br>`+warns.map(w=>"• "+w).join("<br>")+`</div>`;
-    // legend (shared across trips)
+    // legend (shared across trips) — include each mission's payout when given
     html+=`<div class="panel"><b>Missions</b><div class="flex-badges" style="margin-top:6px">`+
-      missions.map(m=>`<span class="badge" style="background:${color[m.code]}">${m.code} — ${m.label}</span>`).join("")+`</div></div>`;
+      missions.map(m=>`<span class="badge" style="background:${color[m.code]}">${m.code} — ${m.label}${m.reward?` · ${aUEC(m.reward)}`:""}</span>`).join("")+`</div></div>`;
+
+    // payout summary — only shown if at least one mission has a reward
+    const totalReward=missions.reduce((a,m)=>a+(m.reward||0),0);
+    if(totalReward>0){
+      const withPay=missions.filter(m=>m.reward>0).length;
+      html+=`<div class="panel" style="background:var(--green-dim);border-color:var(--green)">`+
+        `<b style="color:var(--green)">Payout</b> &middot; <span style="font-size:18px;font-weight:800;color:var(--green)">${aUEC(totalReward)}</span>`+
+        `<span style="font-size:12px;color:var(--text-dim)"> across ${withPay} contract${withPay!==1?"s":""}${withPay<missions.length?` (${missions.length-withPay} with no reward listed)`:""}`+
+        ` &middot; ${aUEC(totalReward/total)}/SCU</span>`+
+        `<div style="margin-top:8px"><button onclick="logEarnings(${totalReward})">Add to earnings log ↓</button></div></div>`;
+    }
 
     // tag each input stack so we can reconcile the plan against it later
     items.forEach((it,i)=>it._uid=i);
@@ -916,11 +978,13 @@ const AI_PROMPT=`Transcribe these Star Citizen cargo hauling contract screenshot
 
 Mission - <short label>
 Pickup: <pickup station>
+Reward: <payout number in aUEC>
 Deliver <SCU> <commodity> to <destination station>
 (one Deliver line per delivery objective)
 
 Rules:
 - One Deliver line per delivery (its SCU number, the commodity, and the destination station).
+- Include a Reward line with the contract's total payout in aUEC (digits only, e.g. 45000). Omit it only if the reward isn't shown.
 - If a mission collects one commodity from several stations, write a separate Deliver line for each source and add " from <station>" at the end of that line.
 - Keep station names as shown in the screenshots.`;
 
@@ -959,14 +1023,17 @@ function addMissionFromBuilder(){
     if(scu&&comm&&dest) lines.push(`Deliver ${scu} ${comm} to ${dest}`+(from?` from ${from}`:""));
   });
   if(!lines.length){ alert("Add at least one complete delivery (SCU, commodity, destination)."); return; }
+  const reward=document.getElementById("b-reward").value.trim();
   let block=`# ${label}\n`;
   if(pickup) block+=`Pickup: ${pickup}\n`;
+  if(reward) block+=`Reward: ${reward}\n`;
   block+=lines.join("\n");
   const ta=document.getElementById("missions");
   ta.value=(ta.value.trim()?ta.value.trimEnd()+"\n\n":"")+block;
   // reset builder
   document.getElementById("b-label").value="";
   document.getElementById("b-pickup").value="";
+  document.getElementById("b-reward").value="";
   document.getElementById("b-deliveries").innerHTML="";
   addDeliveryRow();
   ta.scrollTop=ta.scrollHeight;
@@ -982,6 +1049,7 @@ function initBuilder(){
 window.addEventListener("DOMContentLoaded",()=>{
   initBuilder();
   initShipPicker();
+  renderEarnings();
   if(document.getElementById("grids").value.trim()) textToRows(); // restore rows from any saved text
   checkGridSum();
   if(document.getElementById("missions").value.trim()) run();
